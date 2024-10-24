@@ -9,6 +9,9 @@ pub struct Input {
     pub out_wasm_code: PathBuf,
     pub out_wasm_name: String,
     pub out_js_folder: PathBuf,
+    pub out_ligetron_wat_code: PathBuf,
+    pub out_ligetron_wasm_code: PathBuf,
+    pub out_ligetron_folder: PathBuf,
     pub out_c_run_name: String,
     pub out_c_folder: PathBuf,
     pub out_c_code: PathBuf,
@@ -18,6 +21,8 @@ pub struct Input {
     pub c_flag: bool,
     pub wasm_flag: bool,
     pub wat_flag: bool,
+    pub ligetron_wasm_flag: bool,
+    pub ligetron_wat_flag: bool,
     pub r1cs_flag: bool,
     pub sym_flag: bool,
     pub json_constraint_flag: bool,
@@ -63,6 +68,7 @@ impl Input {
         };
         let output_c_path = Input::build_folder(&output_path, &file_name, CPP);
         let output_js_path = Input::build_folder(&output_path, &file_name, JS);
+        let output_ligetron_path = Input::build_folder(&output_path, &file_name, "ligetron");
         let o_style = input_processing::get_simplification_style(&matches)?;
         let link_libraries = input_processing::get_link_libraries(&matches);
         Result::Ok(Input {
@@ -73,6 +79,9 @@ impl Input {
             out_wasm_code: Input::build_output(&output_js_path, &file_name, WASM),
 	        out_js_folder: output_js_path.clone(),
 	        out_wasm_name: file_name.clone(),
+            out_ligetron_wat_code: Input::build_output(&output_ligetron_path, &file_name, WAT),
+            out_ligetron_wasm_code: Input::build_output(&output_ligetron_path, &file_name, WASM),
+            out_ligetron_folder: output_ligetron_path.clone(),  
 	        out_c_folder: output_c_path.clone(),
 	        out_c_run_name: file_name.clone(),
             out_c_code: Input::build_output(&output_c_path, &file_name, CPP),
@@ -91,6 +100,8 @@ impl Input {
             wat_flag:input_processing::get_wat(&matches),
             wasm_flag: input_processing::get_wasm(&matches),
             c_flag: c_flag,
+            ligetron_wasm_flag: input_processing::get_ligetron_wasm(&matches),
+            ligetron_wat_flag: input_processing::get_ligetron_wat(&matches),
             r1cs_flag: input_processing::get_r1cs(&matches),
             sym_flag: input_processing::get_sym(&matches),
             main_inputs_flag: input_processing::get_main_inputs_log(&matches),
@@ -148,6 +159,16 @@ impl Input {
         self.out_wasm_name.clone()
     }
 
+    pub fn ligetron_wat_file(&self) -> &str {
+        self.out_ligetron_wat_code.to_str().unwrap()
+    }
+    pub fn ligetron_wasm_file(&self) -> &str {
+        self.out_ligetron_wasm_code.to_str().unwrap()
+    }
+    pub fn ligetron_folder(&self) -> &str {
+        self.out_ligetron_folder.to_str().unwrap()
+    }
+
     pub fn c_folder(&self) -> &str {
         self.out_c_folder.to_str().unwrap()
     }
@@ -175,6 +196,12 @@ impl Input {
     }
     pub fn c_flag(&self) -> bool {
         self.c_flag
+    }
+    pub fn ligetron_wasm_flag(&self) -> bool {
+        self.ligetron_wasm_flag
+    }
+    pub fn ligetron_wat_flag(&self) -> bool {
+        self.ligetron_wat_flag
     }
     pub fn unsimplified_flag(&self) -> bool {
         self.fast_flag
@@ -286,6 +313,14 @@ mod input_processing {
 
     pub fn get_wasm(matches: &ArgMatches) -> bool {
         matches.is_present("print_wasm")
+    }
+
+    pub fn get_ligetron_wasm(matches: &ArgMatches) -> bool {
+        matches.is_present("print_ligetron_wasm")
+    }
+
+    pub fn get_ligetron_wat(matches: &ArgMatches) -> bool {
+        matches.is_present("print_ligetron_wat")
     }
 
     pub fn get_wat(matches: &ArgMatches) -> bool {
@@ -444,6 +479,20 @@ mod input_processing {
                     .takes_value(false)
                     .display_order(90)
                     .help("Compiles the circuit to wasm"),
+            )
+            .arg(
+                Arg::with_name("print_ligetron_wasm")
+                    .long("ligetron-wasm")
+                    .takes_value(false)
+                    .display_order(100)
+                    .help("Compiles the circuit to Ligetron compatible wasm")
+            )
+            .arg(
+                Arg::with_name("print_ligetron_wat")
+                    .long("ligetron-wat")
+                    .takes_value(false)
+                    .display_order(100)
+                    .help("Compiles the circuit to Ligetron compatible wat")
             )
             .arg(
                 Arg::with_name("print_wat")

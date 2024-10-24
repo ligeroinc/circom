@@ -29,6 +29,17 @@ pub fn write_wasm(circuit: &Circuit, js_folder: &str, wasm_name: &str, file: &st
     circuit.produce_wasm(js_folder, wasm_name, &mut writer)
 }
 
+pub fn write_ligetron(circuit: &Circuit, ligetron_folder: &str, wasm_name: &str, file: &str) -> Result<(), ()> {
+    use std::path::Path;
+    if Path::new(ligetron_folder).is_dir() {
+        std::fs::remove_dir_all(ligetron_folder).map_err(|_err| {})?;
+    }
+    std::fs::create_dir(ligetron_folder).map_err(|_err| {})?;
+    let file = File::create(file).map_err(|_err| {})?;
+    let mut writer = BufWriter::new(file);
+    circuit.produce_wasm(ligetron_folder, wasm_name, &mut writer)
+}
+
 pub fn write_c(circuit: &Circuit, c_folder: &str, c_run_name: &str, c_file: &str, dat_file: &str) -> Result<(), ()> {
     use std::path::Path;
     if Path::new(c_folder).is_dir() {

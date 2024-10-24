@@ -54,12 +54,17 @@ fn start() -> Result<(), ()> {
         wat_flag: user_input.wat_flag(),
 	    js_folder: user_input.js_folder().to_string(),
 	    wasm_name: user_input.wasm_name().to_string(),
+        ligetron_wasm_flag: user_input.ligetron_wasm_flag(),
+        ligetron_wat_flag: user_input.ligetron_wat_flag(),
+        ligetron_folder: user_input.ligetron_folder().to_string(),
 	    c_folder: user_input.c_folder().to_string(),
 	    c_run_name: user_input.c_run_name().to_string(),
         c_file: user_input.c_file().to_string(),
         dat_file: user_input.dat_file().to_string(),
         wat_file: user_input.wat_file().to_string(),
         wasm_file: user_input.wasm_file().to_string(),
+        ligetron_wat_file: user_input.ligetron_wat_file().to_string(),
+        ligetron_wasm_file: user_input.ligetron_wasm_file().to_string(),
         produce_input_log: user_input.main_inputs_flag(),
     };
     compilation_user::compile(compilation_config)?;

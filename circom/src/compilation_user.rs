@@ -12,6 +12,9 @@ pub struct CompilerConfig {
     pub wasm_name: String,
     pub wat_file: String,
     pub wasm_file: String,
+    pub ligetron_folder: String,
+    pub ligetron_wat_file: String,
+    pub ligetron_wasm_file: String,
     pub c_folder: String,
     pub c_run_name: String,
     pub c_file: String,
@@ -19,6 +22,8 @@ pub struct CompilerConfig {
     pub wat_flag: bool,
     pub wasm_flag: bool,
     pub c_flag: bool,
+    pub ligetron_wasm_flag: bool,
+    pub ligetron_wat_flag: bool,
     pub debug_output: bool,
     pub produce_input_log: bool,
     pub vcp: VCP,
@@ -27,7 +32,12 @@ pub struct CompilerConfig {
 pub fn compile(config: CompilerConfig) -> Result<(), ()> {
 
 
-    if config.c_flag || config.wat_flag || config.wasm_flag{
+    if config.c_flag ||
+       config.wat_flag ||
+       config.wasm_flag ||
+       config.ligetron_wasm_flag ||
+       config.ligetron_wat_flag {
+
         let circuit = compiler_interface::run_compiler(
             config.vcp,
             Config { debug_output: config.debug_output, produce_input_log: config.produce_input_log, wat_flag: config.wat_flag },
@@ -92,8 +102,29 @@ pub fn compile(config: CompilerConfig) -> Result<(), ()> {
             }
             (false, false) => {}
         }
+
+        if config.ligetron_wat_flag || config.ligetron_wasm_flag {
+            compiler_interface::write_ligetron(&circuit, &config.ligetron_folder, &config.wasm_name, &config.ligetron_wat_file)?;
+            println!("{} {}", Colour::Green.paint("Written successfully:"), config.ligetron_wat_file);
+
+            if config.ligetron_wasm_flag {
+                let result = wat_to_wasm(&config.ligetron_wat_file, &config.ligetron_wasm_file);
+                match result {
+                    Result::Err(report) => {
+                        Report::print_reports(&[report], &FileLibrary::new());
+                        return Err(());
+                    }
+                    Result::Ok(()) => {
+                        println!("{} {}", Colour::Green.paint("Written successfully:"), config.ligetron_wasm_file);
+                    }
+                }
+            }
+
+            if !config.ligetron_wat_flag {
+                std::fs::remove_file(&config.ligetron_wat_file).unwrap();
+            }
+        }
     }
-    
 
     Ok(())
 }
