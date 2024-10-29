@@ -2,6 +2,7 @@ use super::ir_interface::*;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 
 #[derive(Clone)]
 pub struct ReturnBucket {
@@ -90,6 +91,12 @@ impl WriteWasm for ReturnBucket {
             instructions.push(";; end of return bucket".to_string());
 	}
         instructions
+    }
+}
+
+impl GenerateLigetronInstructions for ReturnBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+        panic!("NYI");
     }
 }
 

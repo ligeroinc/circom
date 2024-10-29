@@ -37,7 +37,7 @@ pub fn write_ligetron(circuit: &Circuit, ligetron_folder: &str, wasm_name: &str,
     std::fs::create_dir(ligetron_folder).map_err(|_err| {})?;
     let file = File::create(file).map_err(|_err| {})?;
     let mut writer = BufWriter::new(file);
-    circuit.produce_wasm(ligetron_folder, wasm_name, &mut writer)
+    circuit.produce_ligetron(wasm_name, &mut writer)
 }
 
 pub fn write_c(circuit: &Circuit, c_folder: &str, c_run_name: &str, c_file: &str, dat_file: &str) -> Result<(), ()> {

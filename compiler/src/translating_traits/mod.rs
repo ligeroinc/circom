@@ -1,5 +1,6 @@
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 use std::io::Write;
 
 pub trait WriteC {
@@ -26,4 +27,12 @@ pub trait WriteWasm {
         writer.write_all(code.as_bytes()).map_err(|_| {})?;
         writer.flush().map_err(|_| {})
     }
+}
+
+pub trait GenerateLigetronInstructions {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) -> Vec<String>;
+}
+
+pub trait GenerateLigetron {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer);
 }

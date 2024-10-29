@@ -2,6 +2,7 @@ use crate::intermediate_representation::InstructionList;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 
 type TemplateID = usize;
 pub type TemplateCode = Box<TemplateCodeInfo>;
@@ -145,6 +146,12 @@ impl WriteWasm for TemplateCodeInfo {
         instructions.push(set_constant("0"));	
         instructions.push(")".to_string());
         instructions
+    }
+}
+
+impl GenerateLigetronInstructions for TemplateCodeInfo {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+        panic!("NYI");
     }
 }
 

@@ -19,6 +19,7 @@ pub use super::value_bucket::ValueBucket;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 
 pub trait IntoInstruction {
     fn into_instruction(self) -> Instruction;
@@ -123,6 +124,25 @@ impl WriteWasm for Instruction {
             Assert(v) => v.produce_wasm(producer),
             CreateCmp(v) => v.produce_wasm(producer),
             Log(v) => v.produce_wasm(producer),
+        }
+    }
+}
+
+impl GenerateLigetronInstructions for Instruction {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) -> Vec<String> {
+        use Instruction::*;
+        match self {
+            Value(v) => v.generate_ligetron(producer),
+            Load(v) => v.generate_ligetron(producer),
+            Store(v) => v.generate_ligetron(producer),
+            Compute(v) => v.generate_ligetron(producer),
+            Call(v) => v.generate_ligetron(producer),
+            Branch(v) => v.generate_ligetron(producer),
+            Return(v) => v.generate_ligetron(producer),
+            Loop(v) => v.generate_ligetron(producer),
+            Assert(v) => v.generate_ligetron(producer),
+            CreateCmp(v) => v.generate_ligetron(producer),
+            Log(v) => v.generate_ligetron(producer),
         }
     }
 }

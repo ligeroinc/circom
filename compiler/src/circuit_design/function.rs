@@ -4,6 +4,7 @@ use crate::intermediate_representation::InstructionList;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 //use std::io::Write;
 
 pub type FunctionCode = Box<FunctionCodeInfo>;
@@ -85,6 +86,12 @@ impl WriteWasm for FunctionCodeInfo {
         instructions.push(set_constant("0"));	
         instructions.push(")".to_string());
         instructions
+    }
+}
+
+impl GenerateLigetron for FunctionCodeInfo {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
+        panic!("NYI");
     }
 }
 

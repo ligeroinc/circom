@@ -2,6 +2,7 @@ use super::ir_interface::*;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum OperatorType {
@@ -289,6 +290,12 @@ impl WriteWasm for ComputeBucket {
             instructions.push(";; end of compute bucket".to_string());
 	}
         instructions
+    }
+}
+
+impl GenerateLigetronInstructions for ComputeBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+        panic!("NYI");
     }
 }
 

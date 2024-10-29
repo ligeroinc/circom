@@ -5,6 +5,7 @@ use crate::hir::very_concrete_program::VCP;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 use std::io::Write;
 
 pub struct CompilationFlags {
@@ -14,6 +15,7 @@ pub struct CompilationFlags {
 
 pub struct Circuit {
     pub wasm_producer: WASMProducer,
+    pub ligetron_producer: LigetronProducer,
     pub c_producer: CProducer,
     pub templates: Vec<TemplateCode>,
     pub functions: Vec<FunctionCode>,
@@ -24,6 +26,7 @@ impl Default for Circuit {
         Circuit {
             c_producer: CProducer::default(),
             wasm_producer: WASMProducer::default(),
+            ligetron_producer: LigetronProducer::default(),
             templates: Vec::new(),
             functions: Vec::new(),
         }
@@ -292,6 +295,25 @@ impl WriteWasm for Circuit {
         writer.write_all(")".as_bytes()).map_err(|_| {})?;
         writer.flush().map_err(|_| {})
     }
+}
+
+impl GenerateLigetron for Circuit {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        // generating entry funcion
+        producer.generate_entry("_start".to_string());
+
+        // // generating final module code
+        // return producer.module.borrow().generate();
+    }
+
+    // fn write_ligetron<T: Write>(&self, writer: &mut T, producer: &LigetronProducer) -> Result<(), ()> {
+    //     use code_producers::ligetron_elements::ligetron_code_generator::*;
+
+    //     // generating WASM code and wriring it to writer
+    //     let code = self.produce_ligetron(&producer).join("\n");
+    //     writer.write_all(code.as_bytes()).map_err(|_| {})?;
+    //     writer.flush().map_err(|_| {})
+    // }
 }
 
 impl WriteC for Circuit {
@@ -609,5 +631,20 @@ impl Circuit {
         wasm_code_generator::generate_generate_witness_js_file(&js_folder_path).map_err(|_err| {})?;
         wasm_code_generator::generate_witness_calculator_js_file(&js_folder_path).map_err(|_err| {})?;
         self.write_wasm(writer, &self.wasm_producer)
+    }
+
+    pub fn produce_ligetron<W: Write>(&self, _wasm_name: &str, writer: &mut W) -> Result<(), ()> {
+        let mut producer = LigetronProducer::new();
+
+        // generating ligetron code
+        &self.generate_ligetron(&mut producer);
+
+    //     use code_producers::ligetron_elements::ligetron_code_generator::*;
+
+        // generating complete WASM code and wriring it to writer
+        let lines = producer.module.borrow().generate();
+        let code = lines.join("\n");
+        writer.write_all(code.as_bytes()).map_err(|_| {})?;
+        writer.flush().map_err(|_| {})
     }
 }

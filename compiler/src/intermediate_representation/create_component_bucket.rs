@@ -2,6 +2,7 @@ use super::ir_interface::*;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
+use code_producers::ligetron_elements::*;
 
 #[derive(Clone)]
 pub struct CreateCmpBucket {
@@ -198,6 +199,12 @@ impl WriteWasm for CreateCmpBucket {
             instructions.push(";; end create component bucket".to_string());
 	    }
         instructions
+    }
+}
+
+impl GenerateLigetronInstructions for CreateCmpBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+        panic!("NYI");
     }
 }
 
