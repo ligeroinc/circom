@@ -424,22 +424,3 @@ impl Default for LigetronProducer {
         };
     }
 }
-
-
-/// Helper struct for generating instructions for Ligetron target
-pub struct InstructionGenerator {
-    module: &Module,
-    instructions: Vec<String>
-}
-
-impl InstructionGenerator {
-    /// Adds instruction to the list of instructions
-    pub fn inst(&mut self, inst: &str) {
-        self.instructions.push(inst.to_string());
-    }
-
-    /// Returns vector of generated instructions
-    pub fn instructions(self) -> Vec<String> {
-        return self.instructions;
-    }
-}
