@@ -73,8 +73,8 @@ impl WriteWasm for ValueBucket {
     }
 }
 
-impl GenerateLigetronInstructions for ValueBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for ValueBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }

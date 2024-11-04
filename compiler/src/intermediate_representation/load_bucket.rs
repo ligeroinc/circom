@@ -249,9 +249,32 @@ impl WriteWasm for LoadBucket {
     }
 }
 
-impl GenerateLigetronInstructions for LoadBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
-        panic!("NYI");
+impl GenerateLigetron for LoadBucket {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        match &self.src {
+            LocationRule::Indexed { location, .. } => {
+                match &self.address_type {
+                    AddressType::Variable => {
+                        panic!("NYI");
+                    }
+                    AddressType::Signal => {
+                        // extracting signal number from location instruction
+                        match location.as_ref() {
+                            Instruction::Value(value) => {
+                                producer.gen_local_get(&producer.signal(value.value));
+                            },
+                            _ => { panic!("indexed signal load location is not a constant value"); }
+                        }
+                    }
+                    AddressType::SubcmpSignal { .. } => {
+                        panic!("NYI");
+                    }
+                }
+            }
+            LocationRule::Mapped { .. } => {
+                panic!("NYI");
+            }
+        }
     }
 }
 

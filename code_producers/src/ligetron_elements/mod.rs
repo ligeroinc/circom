@@ -1,426 +1,329 @@
-pub mod ligetron_code_generator;
 
-use std::cell::RefCell;
+mod core;
+mod function_generator;
+mod template_generator;
 
-
-pub fn merge_code(instructions: Vec<String>) -> String {
-    let code = format!("{}\n", instructions.join("\n"));
-    code
-}
-
-#[derive(Clone)]
-enum BuiltinType {
-    I32,
-    I64
-}
-
-impl BuiltinType {
-    pub fn generate(&self) -> &'static str {
-        match self {
-            BuiltinType::I32 => "i32",
-            BuiltinType::I64 => "i64"
-        }
-    }
-}
+use core::*;
+use function_generator::*;
+use template_generator::*;
 
 use BuiltinType::*;
 
-/// Represents WASM function type
-struct FunctionType {
-    ret_type: Option<BuiltinType>,
-    params: Vec<BuiltinType>,
-}
 
-impl FunctionType {
-    /// Constructs new function type without return value and parameters
-    pub fn new() -> FunctionType {
-        return FunctionType {
-            ret_type: None,
-            params: vec![]
-        };
-    }
-
-    /// Creates new function type from this type replacing return value type
-    pub fn ret_type(self, ret_type: BuiltinType) -> FunctionType {
-        return FunctionType {
-            ret_type: Some(ret_type),
-            params: self.params
-        };
-    }
-
-    /// Creates new function type from this type replacing parameter types
-    pub fn params(self, params: &[BuiltinType]) -> FunctionType {
-        return FunctionType {
-            ret_type: self.ret_type,
-            params: Vec::from(params)
-        };
-    }
-
-    /// Converts function return type to WASM string
-    pub fn ret_type_to_string(&self) -> String {
-        match &self.ret_type {
-            Some(ret_type) => format!(" (result {})", ret_type.generate()),
-            None => "".to_string()
-        }
-    }
-
-    /// Converts function parameter types to WASM string
-    pub fn params_to_string(&self) -> String {
-        if self.params.is_empty() {
-            "".to_string()
-        } else {
-            format!(" (param {})", self.params.iter().map(|t| t.generate()).collect::<Vec<_>>().join(" "))
-        }
-    }
-
-    /// Converts function type to WASM string
-    pub fn to_string(&self) -> String {
-        let params_str = self.params_to_string();
-        let ret_type_str = self.ret_type_to_string();
-
-        return format!("(func{}{})", params_str, ret_type_str);
-    }
-}
-
-
-/// Represents function identifier
-struct FunctionIdentifier {
-    str: String,
-}
-
-impl FunctionIdentifier {
-    pub fn new(s: &str) -> FunctionIdentifier {
-        return FunctionIdentifier {
-            str: s.to_string()
-        };
-    }
-
-    /// Generates WASM code for function identifier
-    pub fn generate(&self) -> String {
-        return format!("${}", &self.str)
-    }
-}
-
-
-/// Represents function import in WASM model
-struct FunctionImport {
-    name: String,
-    type_: FunctionType,
-    module_name: String,
-    function_name: String,
-}
-
-impl FunctionImport {
-    pub fn new(name: &str,
-               type_: FunctionType,
-               module_name: &str,
-               function_name: &str) -> FunctionImport {
-        return FunctionImport {
-            name: name.to_string(),
-            type_: type_,
-            module_name: module_name.to_string(),
-            function_name: function_name.to_string()
-        };
-    }
-
-    /// Generates WASM code for importing function
-    pub fn generate(&self) -> String {
-        return format!("(import \"{}\" \"{}\" (func ${}{}{}))",
-                       &self.module_name,
-                       &self.function_name,
-                       &self.name,
-                       &self.type_.params_to_string(),
-                       &self.type_.ret_type_to_string());
-    }
-}
-
-
-/// Local variable in generated WASM code
-struct LocalVariable {
-    name: Option<String>,
-    type_: BuiltinType,
-}
-
-impl LocalVariable {
-    /// Generates local variable into WASM code
-    pub fn generate(&self) -> String {
-        return format!("(local {})", self.generate_name_and_type());
-    }
-
-    /// Generates local variable into WASM code as function parameter
-    pub fn generate_param(&self) -> String {
-        return format!("(param {})", self.generate_name_and_type());
-    }
-
-    /// Generates local variable name and type
-    fn generate_name_and_type(&self) -> String {
-        let name_str = match &self.name {
-            Some(s) => format!("${} ", s),
-            None => "".to_string()
-        };
-
-        return format!("{}{}", name_str, self.type_.generate());
-    }
-}
-
-
-/// Reference to local variable
-enum LocalVariableRef {
-    Name(String),
-    Index(usize)
-}
-
-impl LocalVariableRef {
-    /// Generates local variable reference into WASM
-    pub fn generate(&self) -> String {
-        match &self {
-            LocalVariableRef::Name(name) => format!("${}", name),
-            LocalVariableRef::Index(idx) => format!("{}", idx)
-        }
-    }
-}
-
-
-/// Represents a single function in generated code
-struct Function {
-    name: String,
-    params: Vec<LocalVariable>,
-    locals: Vec<LocalVariable>,
-
-    instructions: Vec<String>,
-    export_name: Option<String>,
-}
-
-impl Function {
-    /// Constructs new function
-    pub fn new(name: &str) -> Function {
-        return Function {
-            name: name.to_string(),
-            params: Vec::<LocalVariable>::new(),
-            locals: Vec::<LocalVariable>::new(),
-            instructions: Vec::<String>::new(),
-            export_name: None
-        }
-    }
-
-    /// Adds new named function parameter. Returns refence to function parameter.
-    pub fn new_param(&mut self, name: &str, type_: BuiltinType) -> LocalVariableRef {
-        if !&self.locals.is_empty() {
-            panic!("can't add function parameters after local variables");
-        }
-
-        let param = LocalVariable {
-            name: Some(name.to_string()),
-            type_: type_
-        };
-
-        self.params.push(param);
-        return LocalVariableRef::Name(name.to_string());
-    }
-
-    /// Adds new named local variable. Returns reference to variable.
-    pub fn new_named_local(&mut self, name: &str, type_: BuiltinType) -> LocalVariableRef {
-        let local = LocalVariable {
-            name: Some(name.to_string()),
-            type_: type_
-        };
-
-        self.locals.push(local);
-        return LocalVariableRef::Name(name.to_string());
-    }
-
-    /// Adds new unnamed local variable. Returns reference to variable.
-    pub fn new_local(&mut self, type_: BuiltinType) -> LocalVariableRef {
-        let local = LocalVariable {
-            name: None,
-            type_: type_
-        };
-
-        let local_idx = self.locals.len() + self.params.len();
-
-        self.locals.push(local);
-        return LocalVariableRef::Index(local_idx);
-    }
-
-    /// Appends instruction to function body
-    pub fn add(&mut self, instruction: &str) {
-        self.instructions.push(instruction.to_string());
-    }
-
-    /// Generates function code as list of instructions
-    pub fn generate(&self) -> Vec<String> {
-        let mut instructions = Vec::<String>::new();
-
-        // generating function header
-        instructions.push(format!("(func ${}", &self.name));
-
-        // generating export name
-        match &self.export_name {
-            Some(name) => {
-                instructions.push(format!("    (export \"{}\")", name))
-            }
-            None => {}
-        }
-
-        // generating parameters
-        for param in &self.params {
-            instructions.push(format!("    {}", param.generate_param()));
-        }
-
-        // generating locals
-        instructions.push(format!(""));
-        for local in &self.locals {
-            instructions.push(format!("    {}", local.generate()));
-        }
-
-        // adding function body
-        instructions.push(format!(""));
-        for inst in &self.instructions {
-            instructions.push(format!("    {}", inst))
-        }
-
-        // adding terminating ) for function body
-        instructions.push(format!(")"));
-
-        return instructions;
-    }
-
-    /// Sets function export name
-    pub fn set_export_name(&mut self, name: &str) {
-        self.export_name = Some(name.to_string());
-    }
-}
-
-
-pub struct Module {
-    imports: Vec<FunctionImport>,
-    functions: Vec<Function>,
-}
-
-impl Module {
-    /// Creates new empty module
-    pub fn new() -> Module {
-        return Module {
-            imports: Vec::<FunctionImport>::new(),
-            functions: Vec::<Function>::new()
-        };
-    }
-
-    /// Adds function import into generated module. Returns identifier of imported function
-    fn import_function(&mut self,
-                       name: &str,
-                       type_: FunctionType,
-                       module_name: &str,
-                       function_name: &str) -> FunctionIdentifier {
-        let import = FunctionImport::new(name, type_, module_name, function_name);
-        self.imports.push(import);
-        return FunctionIdentifier::new(function_name);
-    }
-
-    /// Adds new function into generated module.
-    fn add_function(&mut self, func: Function) {
-        self.functions.push(func);
-    }
-
-    /// Generates code for module
-    pub fn generate(&self) -> Vec<String> {
-        let mut instructions = Vec::<String>::new();
-
-        // module header
-        instructions.push(format!("(module"));
-
-        // imports
-        instructions.push(format!(""));
-        for imp in &self.imports {
-            instructions.push(imp.generate());
-        }
-
-        // global memory definition
-        instructions.push(format!(""));
-        instructions.push(format!("(memory 1 1)"));
-
-        // functions
-        for func in &self.functions {
-            instructions.push(format!(""));
-            instructions.append(&mut func.generate());
-        }
-
-        // module footer
-        instructions.push(format!(""));
-        instructions.push(format!(")"));
-
-        return instructions
-    }
+#[derive(Clone)]
+pub struct LigetronProducerInfo {
+    pub main_comp_name: String,
+    pub number_of_main_inputs: usize,
+    pub number_of_main_outputs: usize
 }
 
 
 pub struct LigetronProducer {
-    pub module: RefCell<Module>
+    info: LigetronProducerInfo,
+    module: Module,
+
+    /// Generator for current function being generated
+    function_gen: Option<FunctionGenerator>,
+
+    /// Generator for current template being generated
+    template_gen: Option<TemplateGenerator>
 }
 
 impl LigetronProducer {
     /// Creates new producer
-    pub fn new() -> LigetronProducer {
+    pub fn new(info: &LigetronProducerInfo) -> LigetronProducer {
         return LigetronProducer {
-            module: RefCell::new(Module::new())
+            info: info.clone(),
+            module: Module::new(),
+            function_gen: None,
+            template_gen: None
         };
     }
 
-    /// Generates call instruction
-    fn gen_call(&self, func: FunctionIdentifier) -> String {
-        return format!("call {}", func.generate());
+    /// Generates final code for module
+    pub fn generate(&mut self) -> Vec<String> {
+        return self.module.generate();
     }
 
-    /// Generates setting value of a local
-    fn gen_local_set(&self, local: LocalVariableRef, expr: &str) -> String {
-        return format!("local.set {} {}", local.generate(), expr);
+
+    ////////////////////////////////////////////////////////////
+    // Functions
+
+    /// Returns reference to current function generator
+    pub fn function_gen(&mut self) -> &mut FunctionGenerator {
+        return self.function_gen.as_mut().expect("no current template generator");
     }
+
+    /// Starts generation of new function
+    pub fn new_function(&mut self, name: &str) {
+        assert!(self.function_gen.is_none());
+        self.function_gen = Some(FunctionGenerator::new(name));
+    }
+
+    /// Finishes function generation
+    pub fn end_function(&mut self) {
+        assert!(self.function_gen.is_some());
+        let insts = self.function_gen().generate();
+        self.module.add_instructions(vec!["".to_string()]);
+        self.module.add_instructions(insts);
+        self.function_gen = None
+    }
+
+    /// Adds return type for current function
+    pub fn add_ret_type(&mut self, type_: BuiltinType) {
+        self.function_gen().add_ret_type(type_);
+    }
+
+    /// Adds new named function parameter for current function.
+    /// Returns refence to function parameter.
+    pub fn new_param(&mut self, name: &str, type_: BuiltinType) -> LocalVariableRef {
+        return self.function_gen().new_param(name, type_);
+    }
+
+    /// Adds new named local variable. Returns reference to variable.
+    pub fn new_named_local(&mut self, name: &str, type_: BuiltinType) -> LocalVariableRef {
+        return self.function_gen().new_named_local(name, type_);
+    }
+
+    /// Adds new unnamed local variable. Returns reference to variable.
+    pub fn new_local(&mut self, type_: BuiltinType) -> LocalVariableRef {
+        return self.function_gen().new_local(type_);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Instructions
+
+    /// Generates instruction in current function
+    pub fn gen_inst(&mut self, inst: &str) {
+        self.function_gen().add(inst);
+    }
+
+    /// Generates empty code line
+    pub fn gen_empty(&mut self) {
+        self.gen_inst("");
+    }
+
+    /// Generates comment with emtpy line before it
+    pub fn gen_comment(&mut self, str: &str) {
+        self.gen_empty();
+        self.gen_inst(&format!(";; {}", str));
+    }
+
+    /// Generates call instruction
+    fn gen_call(&mut self, func: FunctionIdentifier) {
+        self.gen_inst(&format!("call {}", func.generate()));
+    }
+
+    /// Generates getting value of a local
+    pub fn gen_local_get(&mut self, local: &LocalVariableRef) {
+        self.gen_inst(&format!("local.get {}", local.generate()));
+    }
+
+    /// Generates setting value of a local to specified string expression
+    pub fn gen_local_set_expr(&mut self, local: &LocalVariableRef, expr: &str) {
+        self.gen_inst(&format!("local.set {} {}", local.generate(), expr));
+    }
+
+    /// Generates setting valuf of a local to current value on top of stack
+    pub fn gen_local_set(&mut self, local: &LocalVariableRef) {
+        self.gen_inst(&format!("local.set {}", local.generate()));
+    }
+
+    /// Generates drop instruction
+    pub fn gen_drop(&mut self) {
+        self.gen_inst(&format!("drop"));
+    }
+
+    /// Generates constant instruction
+    pub fn gen_const(&mut self, type_: BuiltinType, value: i64) {
+        self.gen_inst(&format!("{}.const {}", type_.generate(), value));
+    }
+
+    /// Generates mul instruction
+    pub fn gen_mul(&mut self, type_: BuiltinType) {
+        self.gen_inst(&format!("{}.mul", type_.generate()))
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Utility functions
 
     /// Generates entry point function for program.
-    pub fn generate_entry(&self, func_name: String) {
-        let mut module = self.module.borrow_mut();
-
-        let mut func = Function::new(&func_name);
-        func.set_export_name(&func_name);
+    pub fn generate_entry(&mut self, func_name: String) {
+        self.new_function(&func_name);
+        self.function_gen().set_export_name(&func_name);
 
         // we use beginning of global memory (at address 0) to temporarly
         // store information about command line arguments
 
-        // getting number of arguments and buffer size of argumens.
-        let args_sizes_get = module.import_function(
+        // getting number of arguments and buffer size for arguments.
+        let args_sizes_get = self.module.import_function(
             "args_sizes_get",
             FunctionType::new().ret_type(I32).params(&[I32, I32]),
             "wasi_snapshot_preview1",
             "args_sizes_get");
-        func.add("i32.const 0");      // address to store number of args
-        func.add("i32.const 4");      // address to store required args buffer size
-        func.add(&self.gen_call(args_sizes_get));
+        self.gen_comment("getting size of program arguments");
+        self.gen_const(I32, 0);     // address to store number of args
+        self.gen_const(I32, 4);     // address to store required args buffer size
+        self.gen_call(args_sizes_get);
 
-        // saving number of arguments and size of arguments buffer into locals
-        let argc = func.new_named_local("argc", I32);
-        func.add(&self.gen_local_set(argc, "(i32.load (i32.const 0))"));
-        let argv_size = func.new_named_local("argv_size", I32);
-        func.add(&self.gen_local_set(argv_size, "(i32.load (i32.const 4))"));
+        // removing call return value with error code from stack
+        // TODO: check error code
+        self.gen_drop();
+
+        // saving number of arguments into local
+        let argc = self.new_named_local("argc", I32);
+        self.gen_const(I32, 0);
+        self.gen_inst("i32.load");
+        self.gen_local_set(&argc);
+
+        // saving size of buffer for arguments into local
+        let argv_size = self.new_named_local("argv_size", I32);
+        self.gen_const(I32, 4);
+        self.gen_inst("i32.load");
+        self.gen_local_set(&argv_size);
+
+        // getting arguments
+        let args_get = self.module.import_function(
+            "args_get",
+            FunctionType::new().ret_type(I32).params(&[I32, I32]),
+            "wasi_snapshot_preview1",
+            "args_get");
+        self.gen_comment("getting program arguments");
+        self.gen_const(I32, 0);     // address to store pointers to arguments
+        self.gen_local_get(&argc);
+        self.gen_const(I32, 4);
+        self.gen_mul(I32);          // address to store arguments buffer
+        self.gen_call(args_get);
+
+        // removing call result with error code
+        // TODO: check error code
+        self.gen_drop();
+
+        // loading parameters on stack
+        // TODO: check number of parameters
+        for i in 0 .. self.info.number_of_main_inputs {
+            // loading address of argument
+            self.gen_comment(&format!("loading argument {}", i + 1));
+            self.gen_const(I32, (4 * (i + 1)) as i64);
+            self.gen_inst("i32.load");
+
+            // loading argument
+            self.gen_inst("i64.load");
+        }
+
+        // executing main component
+        self.gen_comment("executing main component");
+        self.gen_call(self.comp_run_function(&self.info.main_comp_name));
+
+        // discarding results of main component
+        // TODO: should we handle it?
+        for _i in 0 .. self.info.number_of_main_outputs {
+            self.gen_drop();
+        }
 
         // calling exit function at the end of entry function
         // TODO: pass correct exit code?
-        let proc_exit = module.import_function(
+        let proc_exit = self.module.import_function(
             "proc_exit",
             FunctionType::new().params(&[I32]),
             "wasi_snapshot_preview1",
             "proc_exit");
-        func.add("i32.const 0");
-        //func.add("local.get $argv_size");
-        func.add(&self.gen_call(proc_exit));
+        self.gen_comment("calling exit function");
+        self.gen_inst("i32.const 0");
+        self.gen_call(proc_exit);
 
-        module.add_function(func);
+        self.end_function();
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Templates
+
+    /// Returns reference to template generator
+    pub fn template_gen(&self) -> &TemplateGenerator {
+        return self.template_gen.as_ref().expect("no current template generator");
+    }
+
+    /// Returns reference to mutable template generator
+    pub fn template_gen_mut(&mut self) -> &mut TemplateGenerator {
+        return self.template_gen.as_mut().expect("no current template generator");
+    }
+
+    /// Returns name of function for component with specified name
+    pub fn comp_run_function_name(&self, name: &str) -> String {
+        return format!("{}_template", name);
+    }
+
+    /// Returns component run function for template with specified name
+    pub fn comp_run_function(&self, name: &str) -> FunctionIdentifier {
+        return FunctionIdentifier::new(&self.comp_run_function_name(name));
+    }
+
+    /// Starts generating new template
+    pub fn new_template(&mut self, name: &str) {
+        // starting genereration of new function for template
+        self.new_function(&self.comp_run_function_name(name));
+
+        // creating new template generator
+        assert!(self.template_gen.is_none());
+        self.template_gen = Some(TemplateGenerator::new());
+    }
+
+    /// Finishes generating template
+    pub fn end_template(&mut self) {
+        assert!(self.template_gen.is_some());
+
+        // loading output signals on stack before return
+        self.gen_comment("returning output signals");
+        for sig in self.template_gen().output_signals() {
+            self.gen_local_get(&sig);
+        }
+
+        self.end_function();
+        self.template_gen = None;
+    }
+
+    /// Adds new input signal
+    pub fn new_input_signal(&mut self) {
+        // adding function parameter for input signal
+        let sig_num = self.template_gen().next_signal_number();
+        let sig_var = self.function_gen().new_param(&format!("input_signal_{}", sig_num), I64);
+        self.template_gen_mut().add_input_signal(sig_var);
+    }
+
+    /// Adds new output signal
+    pub fn new_output_signal(&mut self) {
+        // adding function return type for output signal
+        self.add_ret_type(I64);
+
+        // adding local variable for storing value of output signal
+        let sig_num = self.template_gen().next_signal_number();
+        let sig_var = self.function_gen().new_named_local(&format!("output_signal_{}", sig_num), I64);
+        self.template_gen_mut().add_output_signal(sig_var);
+    }
+
+    /// Adds new intermediate signal
+    pub fn new_intermediate_signal(&mut self) {
+        // adding local variable for storing value of intermediate signal
+        let sig_num = self.template_gen().next_signal_number();
+        let sig_var = self.function_gen().new_named_local(&format!("intermediate_signal_{}", sig_num), I64);
+        self.template_gen_mut().add_output_signal(sig_var);
+    }
+
+    /// Returns reference to local variable for signal with specified number
+    pub fn signal(&self, sig_num: usize) -> LocalVariableRef {
+        return self.template_gen().signal(sig_num);
     }
 }
 
-impl Default for LigetronProducer {
+impl Default for LigetronProducerInfo {
     fn default() -> Self {
-        return LigetronProducer {
-            module: RefCell::new(Module::new())
+        return LigetronProducerInfo {
+            main_comp_name: "MAIN_COMP".to_string(),
+            number_of_main_inputs: 0,
+            number_of_main_outputs: 0
         };
     }
 }

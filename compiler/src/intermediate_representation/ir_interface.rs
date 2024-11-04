@@ -128,8 +128,8 @@ impl WriteWasm for Instruction {
     }
 }
 
-impl GenerateLigetronInstructions for Instruction {
-    fn generate_ligetron(&self, producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for Instruction {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         use Instruction::*;
         match self {
             Value(v) => v.generate_ligetron(producer),

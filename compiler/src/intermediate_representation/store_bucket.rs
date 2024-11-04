@@ -441,9 +441,54 @@ impl WriteWasm for StoreBucket {
     }
 }
 
-impl GenerateLigetronInstructions for StoreBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
-        panic!("NYI");
+impl GenerateLigetron for StoreBucket {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        let (_size_dest, _values_dest) = match &self.context.size {
+            SizeOption::Single(value) => (*value, vec![]),
+            SizeOption::Multiple(values) => {
+                (values.len(), values.clone())
+            }
+        };
+
+        let (_size_src, _values_src) = match &self.src_context.size {
+            SizeOption::Single(value) => (*value, vec![]),
+            SizeOption::Multiple(values) => {
+                (values.len(), values.clone())
+            }
+        };
+
+        match &self.dest {
+            LocationRule::Indexed { location, .. } => {
+                match &self.dest_address_type {
+                    AddressType::Variable => {
+                        panic!("NYI");
+                    }
+                    AddressType::Signal => {
+                        // extracting signal number from location instruction
+                        match location.as_ref() {
+                            Instruction::Value(value) => {
+                                self.src.as_ref().generate_ligetron(producer);
+                                producer.gen_local_set(&producer.signal(value.value));
+                            },
+                            _ => { panic!("indexed signal store location is not a constant value"); }
+                        }
+                    }
+                    AddressType::SubcmpSignal { .. } => {
+                        panic!("NYI");
+                    }
+                }
+            }
+            LocationRule::Mapped { .. }=> {
+                match &self.dest_address_type {
+                    AddressType::SubcmpSignal { .. } => {
+                        panic!("NYI");
+                    }
+                    _ => {
+                        assert!(false);
+                    }
+                }
+            }
+        }
     }
 }
     

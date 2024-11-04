@@ -94,8 +94,8 @@ impl WriteWasm for ReturnBucket {
     }
 }
 
-impl GenerateLigetronInstructions for ReturnBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for ReturnBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }

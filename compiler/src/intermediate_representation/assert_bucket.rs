@@ -67,8 +67,8 @@ impl WriteWasm for AssertBucket {
     }
 }
 
-impl GenerateLigetronInstructions for AssertBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for AssertBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }

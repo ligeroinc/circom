@@ -5,8 +5,10 @@ use crate::hir::very_concrete_program::*;
 use crate::intermediate_representation::translate;
 use crate::intermediate_representation::translate::{CodeInfo, FieldTracker, TemplateDB, ParallelClusters};
 use code_producers::c_elements::*;
+use code_producers::ligetron_elements::LigetronProducerInfo;
 use code_producers::wasm_elements::*;
 use program_structure::file_definition::FileLibrary;
+use program_structure::ast::SignalType;
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(debug_assertions)]
@@ -79,6 +81,13 @@ fn build_template_instances(
                 },
             }
         }
+
+        let mut signals_info = Vec::<SignalType>::new();
+        for wire in &template.wires {
+            for _ in 0 .. wire.size() {
+                signals_info.push(wire.xtype());
+            }
+        }
         
         let code_info = CodeInfo {
             cmp_to_type,
@@ -100,6 +109,7 @@ fn build_template_instances(
             string_table : string_table,
             signals_to_tags: template.signals_to_tags,
         };
+
         let mut template_info = TemplateCodeInfo {
             name,
             header,
@@ -111,6 +121,7 @@ fn build_template_instances(
             number_of_inputs: template.number_of_inputs,
             number_of_outputs: template.number_of_outputs,
             number_of_intermediates: template.number_of_intermediates,
+            signals: signals_info,
             has_parallel_sub_cmp: template.has_parallel_sub_cmp,
             ..TemplateCodeInfo::default()
         };
@@ -238,6 +249,16 @@ fn initialize_wasm_producer(vcp: &VCP, database: &TemplateDB, wat_flag:bool, ver
 
     (producer.major_version, producer.minor_version, producer.patch_version) = get_number_version(version);
     producer
+}
+
+// Ligetron producer builder
+fn initialize_ligetron_producer(vcp: &VCP, _database: &TemplateDB, _wat_flag: bool, _version: &str) -> LigetronProducerInfo {
+    let initial_node = vcp.get_main_id();
+    return LigetronProducerInfo {
+        main_comp_name: vcp.get_main_instance().unwrap().template_header.clone(),
+        number_of_main_inputs: vcp.templates[initial_node].number_of_inputs,
+        number_of_main_outputs: vcp.templates[initial_node].number_of_outputs
+    };
 }
 
 fn initialize_c_producer(vcp: &VCP, database: &TemplateDB, version: &str) -> CProducer {
@@ -587,6 +608,7 @@ pub fn build_circuit(vcp: VCP, flag: CompilationFlags, version: &str) -> Circuit
     let template_database = TemplateDB::build(&vcp.templates);
     let mut circuit = Circuit::default();
     circuit.wasm_producer = initialize_wasm_producer(&vcp, &template_database, flag.wat_flag, version);
+    circuit.ligetron_producer_info = initialize_ligetron_producer(&vcp, &template_database, flag.wat_flag, version);
     circuit.c_producer = initialize_c_producer(&vcp, &template_database, version);
 
     let field_tracker = FieldTracker::new();

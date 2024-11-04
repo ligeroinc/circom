@@ -3,9 +3,11 @@ use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
 use code_producers::ligetron_elements::*;
+use program_structure::ast::SignalType;
 
 type TemplateID = usize;
 pub type TemplateCode = Box<TemplateCodeInfo>;
+
 
 #[derive(Default)]
 pub struct TemplateCodeInfo {
@@ -19,6 +21,7 @@ pub struct TemplateCodeInfo {
     pub number_of_inputs: usize,
     pub number_of_outputs: usize, 
     pub number_of_intermediates: usize, // Not used now
+    pub signals: Vec<SignalType>,
     pub body: InstructionList,
     pub var_stack_depth: usize,
     pub expression_stack_depth: usize,
@@ -149,9 +152,33 @@ impl WriteWasm for TemplateCodeInfo {
     }
 }
 
-impl GenerateLigetronInstructions for TemplateCodeInfo {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
-        panic!("NYI");
+impl GenerateLigetron for TemplateCodeInfo {
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        // starting new template
+        producer.new_template(&self.header);
+
+        // adding template signals
+        for sig in &self.signals {
+            match sig {
+                SignalType::Input => {
+                    producer.new_input_signal();
+                },
+                SignalType::Output => {
+                    producer.new_output_signal();
+                },
+                SignalType::Intermediate => {
+                    producer.new_intermediate_signal();
+                },
+            }
+        }
+
+        // generating template body
+        for inst in &self.body {
+            inst.generate_ligetron(producer);
+        }
+
+        // finishing template
+        producer.end_template();
     }
 }
 

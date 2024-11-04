@@ -74,8 +74,8 @@ impl WriteWasm for LoopBucket {
     }
 }
 
-impl GenerateLigetronInstructions for LoopBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for LoopBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }

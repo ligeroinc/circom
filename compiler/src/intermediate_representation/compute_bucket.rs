@@ -293,8 +293,8 @@ impl WriteWasm for ComputeBucket {
     }
 }
 
-impl GenerateLigetronInstructions for ComputeBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for ComputeBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }

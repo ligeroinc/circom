@@ -29,10 +29,6 @@ pub trait WriteWasm {
     }
 }
 
-pub trait GenerateLigetronInstructions {
-    fn generate_ligetron(&self, producer: &mut LigetronProducer) -> Vec<String>;
-}
-
 pub trait GenerateLigetron {
     fn generate_ligetron(&self, producer: &mut LigetronProducer);
 }

@@ -103,8 +103,8 @@ impl WriteWasm for LogBucket {
     }
 }
 
-impl GenerateLigetronInstructions for LogBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for LogBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }

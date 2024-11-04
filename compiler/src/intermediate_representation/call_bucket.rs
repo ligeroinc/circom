@@ -464,8 +464,8 @@ impl WriteWasm for CallBucket {
     }
 }
 
-impl GenerateLigetronInstructions for CallBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for CallBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }

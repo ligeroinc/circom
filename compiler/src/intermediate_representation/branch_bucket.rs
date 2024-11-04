@@ -98,8 +98,8 @@ impl WriteWasm for BranchBucket {
     }
 }
 
-impl GenerateLigetronInstructions for BranchBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) -> Vec<String> {
+impl GenerateLigetron for BranchBucket {
+    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
         panic!("NYI");
     }
 }
