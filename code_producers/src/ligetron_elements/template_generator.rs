@@ -1,59 +1,184 @@
 
-use super::core::*;
+use super::{types::*, function_generator::*};
+use WASMType::*;
+
+use std::rc::Rc;
+use std::cell::{RefCell, Ref, RefMut};
+
+
+/// Signal kind
+#[derive(PartialEq)]
+#[derive(Clone)]
+pub enum SignalKind {
+    Input,
+    Output,
+    Intermediate
+}
+
+
+/// Signal info, used to pass signal data from external code to generator
+#[derive(Clone)]
+pub struct SignalInfo {
+    kind: SignalKind
+}
+
+impl SignalInfo {
+    /// Creates new signal info
+    pub fn new(kind: SignalKind) -> SignalInfo {
+        return SignalInfo {
+            kind: kind
+        };
+    }
+}
+
+
+/// Represents a signal in a template
+struct Signal {
+    kind: SignalKind,
+    var: LocalVariableRef
+}
+
+impl Signal {
+    /// Creates new signal
+    pub fn new(kind: SignalKind, var: LocalVariableRef) -> Signal {
+        return Signal {
+            kind: kind,
+            var: var
+        };
+    }
+}
 
 
 /// Type for generating code for a single template
 pub struct TemplateGenerator {
-    /// Vector of template signals
-    signals: Vec<LocalVariableRef>,
+    /// Name of template being generated
+    name_: String,
 
-    /// Vector of output signals
-    pub output_signals: Vec<LocalVariableRef>
+    /// Vector of template signals
+    signals: Vec<Signal>,
+
+    /// Function generator for generating template run function
+    func_gen_: Rc<RefCell<FunctionGenerator>>
 }
 
 impl TemplateGenerator {
     /// Constructs new template generator
-    pub fn new() -> TemplateGenerator {
-        return TemplateGenerator {
-            signals: Vec::<LocalVariableRef>::new(),
-            output_signals: Vec::<LocalVariableRef>::new()
+    pub fn new(name: String, signals: &Vec<SignalInfo>) -> TemplateGenerator {
+        let func_name = format!("{}_template", &name);
+        let mut templ_gen = TemplateGenerator {
+            name_: name.clone(),
+            signals: Vec::<Signal>::new(),
+            func_gen_: Rc::new(RefCell::new(FunctionGenerator::new(&func_name)))
         };
+
+        templ_gen.init(signals);
+
+        return templ_gen;
     }
 
-    /// Returns next signal number
-    pub fn next_signal_number(&self) -> usize {
-        return self.signals.len();
+    /// Initializes generation of new function
+    fn init(&mut self, signals: &Vec<SignalInfo>) {
+        // NOTE: we have to process input signals before other signals because we
+        // can't add local variables after function parameters
+
+        // vector for storing variable references for all signals in their original order
+        let mut sig_vars: Vec<Option<LocalVariableRef>> = vec![None; signals.len()];
+
+        // creating function parameters for input signals
+        for (idx, sig) in signals.iter()
+                .enumerate()
+                .filter(|(_, s)| s.kind == SignalKind::Input) {
+            let par_name = format!("input_signal_{}", idx);
+            let par = self.func_gen().new_param(&par_name, I64);
+            sig_vars[idx] = Some(par);
+        }
+
+        // creating local variables for output signals and adding function return types
+        for (idx, sig) in signals.iter()
+                .enumerate().filter(|(_, s)| s.kind == SignalKind::Output) {
+            // creating local variable
+            let var_name = format!("output_signal_{}", idx);
+            let var = self.func_gen().new_named_local(&var_name, I64);
+            sig_vars[idx] = Some(var);
+
+            // adding function return type
+            self.func_gen().add_ret_type(I64);
+        }
+    
+        // creating local variables for intermediate signals
+        for (idx, sig) in
+                signals.iter()
+                .enumerate()
+                .filter(|(_, s)| s.kind == SignalKind::Intermediate) {
+            let var_name = format!("intermediate_signal_{}", idx);
+            let var = self.func_gen().new_named_local(&var_name, I64);
+            sig_vars[idx] = Some(var);
+        }
+
+        // adding signals
+        for (idx, sig) in signals.iter().enumerate() {
+            self.add_signal(sig.kind.clone(), sig_vars[idx].clone().unwrap());
+        }
     }
 
-    /// Adds new input signal
-    pub fn add_input_signal(&mut self, var: LocalVariableRef) {
-        self.signals.push(var);
+    /// Returns name of template being generated
+    pub fn name(&self) -> &String {
+        return &self.name_;
     }
 
-    /// Adds new output signal
-    pub fn add_output_signal(&mut self, var: LocalVariableRef) {
-        self.signals.push(var.clone());
-        self.output_signals.push(var);
+    /// Returns Rc to function generator for generating template run function
+    pub fn func_gen_rc(&mut self) -> Rc<RefCell<FunctionGenerator>> {
+        return self.func_gen_.clone();
     }
 
-    /// Adds new intermediate signal
-    pub fn new_intermediate_signal(&mut self, var: LocalVariableRef) {
-        self.signals.push(var);
+    /// Returns reference to function generator for generating template run function
+    pub fn func_gen(&self) -> RefMut<FunctionGenerator> {
+        return self.func_gen_.as_ref().borrow_mut();
+    }
+
+    /// Adds new signal
+    pub fn add_signal(&mut self, kind: SignalKind, var: LocalVariableRef) {
+        self.signals.push(Signal::new(kind, var));
     }
 
     /// Returns reference to local variable for signal with specified number
     pub fn signal(&self, idx: usize) -> LocalVariableRef {
         assert!(idx < self.signals.len());
-        return self.signals[idx].clone();
+        return self.signals[idx].var.clone();
     }
 
-    /// Returns vector of output signals
+    /// Returns vector of variables for output signals
     pub fn output_signals(&self) -> Vec<LocalVariableRef> {
-        return self.output_signals.clone();
+        return self.signals.iter()
+            .filter(|s| s.kind == SignalKind::Output)
+            .map(|s| s.var.clone()).collect();
     }
 
-    // /// Generates call to a component template with specified template name
-    // pub fn gen_template_call(&self, name: &str, inputs: Vec<LocalVariableRef>) {
-    //     // pushing 
-    // }
+    /// Builds and returns run function type for this template
+    pub fn function_type(&self) -> FunctionType {
+        let mut ftype = FunctionType::new();
+
+        for sig in &self.signals {
+            match sig.kind {
+                SignalKind::Input => {
+                    ftype.add_param(WASMType::I64);
+                },
+                SignalKind::Output => {
+                    ftype.add_ret_type(WASMType::I64);
+                },
+                _ => {}
+            }
+        }
+
+        return ftype;
+    }
+
+    /// Generates final template code.
+    pub fn end(&mut self) {
+        // loading output signals on stack before return
+        self.func_gen().gen_comment("returning output signals");
+        for sig in self.signals.iter().filter(|s| s.kind == SignalKind::Output) {
+            self.func_gen().gen_local_get(&sig.var);
+        }
+    }
 }

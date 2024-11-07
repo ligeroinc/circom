@@ -154,23 +154,21 @@ impl WriteWasm for TemplateCodeInfo {
 
 impl GenerateLigetron for TemplateCodeInfo {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
-        // starting new template
-        producer.new_template(&self.header);
-
+        // building list of signals
+        let mut signals = Vec::<SignalInfo>::new();
         // adding template signals
         for sig in &self.signals {
-            match sig {
-                SignalType::Input => {
-                    producer.new_input_signal();
-                },
-                SignalType::Output => {
-                    producer.new_output_signal();
-                },
-                SignalType::Intermediate => {
-                    producer.new_intermediate_signal();
-                },
-            }
+            let kind = match sig {
+                SignalType::Input => SignalKind::Input,
+                SignalType::Output => SignalKind::Output,
+                SignalType::Intermediate => SignalKind::Intermediate
+            };
+
+            signals.push(SignalInfo::new(kind));
         }
+
+        // starting new template
+        producer.new_template(&self.header, &signals);
 
         // generating template body
         for inst in &self.body {
