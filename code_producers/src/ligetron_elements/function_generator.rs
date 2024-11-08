@@ -76,15 +76,15 @@ impl Stack {
 
 
 /// Local variable in generated WASM code
-pub struct LocalVariable {
+pub struct WASMLocalVariable {
     name: Option<String>,
     type_: WASMType,
 }
 
-impl LocalVariable {
+impl WASMLocalVariable {
     /// Creates new local variable
-    pub fn new(name: Option<String>, type_: WASMType) -> LocalVariable {
-        return LocalVariable {
+    pub fn new(name: Option<String>, type_: WASMType) -> WASMLocalVariable {
+        return WASMLocalVariable {
             name: name,
             type_: type_
         };
@@ -112,10 +112,46 @@ impl LocalVariable {
 }
 
 
-/// Reference to local variable
+/// Reference to local WASM variable
+#[derive(Clone)]
+pub struct WASMLocalVariableRef {
+    /// Variable index
+    idx: usize
+}
+
+impl WASMLocalVariableRef {
+    /// Creates new local variable reference
+    fn new(idx: usize) -> WASMLocalVariableRef {
+        return WASMLocalVariableRef {
+            idx: idx
+        };
+    }
+}
+
+
+/// Circom local variable
+struct LocalVariable {
+    /// Name of variable
+    name: String,
+
+    /// Vector of WASM local variables where value of this varible is stored
+    locals: Vec<WASMLocalVariableRef>
+}
+
+impl LocalVariable {
+    /// Creates new local variable
+    fn new(name: &str, locals: Vec<WASMLocalVariableRef>) -> LocalVariable {
+        return LocalVariable {
+            name: name.to_string(),
+            locals: locals
+        };
+    }
+}
+
+
+/// Reference to Circlom local variable
 #[derive(Clone)]
 pub struct LocalVariableRef {
-    /// Variable index
     idx: usize
 }
 
@@ -131,10 +167,23 @@ impl LocalVariableRef {
 
 /// Struct for generating code for a single function
 pub struct FunctionGenerator {
+    /// Size of Circom variables, in 32bit
+    size_32_bit: usize,
+
+    /// Function name
     name: String,
+
+    /// Vector of function return types
     ret_types: Vec<WASMType>,
-    params: Vec<LocalVariable>,
-    locals: Vec<LocalVariable>,
+
+    /// WASM parameters
+    params: Vec<WASMLocalVariable>,
+
+    /// WASM local variables
+    locals: Vec<WASMLocalVariable>,
+
+    /// Circom local variables
+    vars: Vec<LocalVariable>,
 
     instructions: Vec<String>,
     export_name: Option<String>,
@@ -145,56 +194,58 @@ pub struct FunctionGenerator {
 
 impl FunctionGenerator {
     /// Constructs new function generator
-    pub fn new(name: &str) -> FunctionGenerator {
+    pub fn new(size_32_bit: usize, name: &str) -> FunctionGenerator {
         return FunctionGenerator {
+            size_32_bit: size_32_bit,
             name: name.to_string(),
-            ret_types: Vec::<WASMType>::new(),
-            params: Vec::<LocalVariable>::new(),
-            locals: Vec::<LocalVariable>::new(),
-            instructions: Vec::<String>::new(),
+            ret_types: Vec::new(),
+            params: Vec::new(),
+            locals: Vec::new(),
+            vars: Vec::new(),
+            instructions: Vec::new(),
             export_name: None,
             stack: Stack::new()
         }
     }
 
-    /// Adds return type for function
-    pub fn add_ret_type(&mut self, t: WASMType) {
+    /// Adds WASM return type for function
+    pub fn add_wasm_ret_type(&mut self, t: WASMType) {
         self.ret_types.push(t);
     }
 
-    /// Adds new named function parameter. Returns refence to function parameter.
-    pub fn new_param(&mut self, name: &str, type_: WASMType) -> LocalVariableRef {
+    /// Adds new WASM named function parameter. Returns refence to function parameter.
+    pub fn new_wasm_param(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
         if !self.locals.is_empty() {
             panic!("can't add function parameters after local variables");
         }
 
-        let param = LocalVariable::new(Some(name.to_string()), type_);
+        let param = WASMLocalVariable::new(Some(name.to_string()), type_);
         let local_idx = self.params.len();
 
         self.params.push(param);
-        return LocalVariableRef::new(local_idx);
+        return WASMLocalVariableRef::new(local_idx);
     }
 
-    /// Adds new named local variable. Returns reference to variable.
-    pub fn new_named_local(&mut self, name: &str, type_: WASMType) -> LocalVariableRef {
-        let local = LocalVariable::new(Some(name.to_string()), type_);
+    /// Adds new WASM named local variable. Returns reference to variable.
+    pub fn new_wasm_named_local(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
+        let local = WASMLocalVariable::new(Some(name.to_string()), type_);
         let local_idx = self.locals.len() + self.params.len();
 
         self.locals.push(local);
-        return LocalVariableRef::new(local_idx);
+        return WASMLocalVariableRef::new(local_idx);
     }
 
-    /// Adds new unnamed local variable. Returns reference to variable.
-    pub fn new_local(&mut self, type_: WASMType) -> LocalVariableRef {
-        let local = LocalVariable::new(None, type_);
+    /// Adds new unnamed WASM local variable. Returns reference to variable.
+    pub fn new_wasm_local(&mut self, type_: WASMType) -> WASMLocalVariableRef {
+        let local = WASMLocalVariable::new(None, type_);
         let local_idx = self.locals.len() + self.params.len();
 
         self.locals.push(local);
-        return LocalVariableRef::new(local_idx);
+        return WASMLocalVariableRef::new(local_idx);
     }
 
-    /// Returns reference to local variable corresponding to reference
-    fn local(&self, lref: &LocalVariableRef) -> &LocalVariable {
+    /// Returns reference to WASM local variable corresponding to reference
+    fn wasm_local(&self, lref: &WASMLocalVariableRef) -> &WASMLocalVariable {
         return if lref.idx < self.params.len() {
             &self.params[lref.idx]
         } else {
@@ -203,8 +254,8 @@ impl FunctionGenerator {
     }
 
     /// Generates reference to WASM local
-    fn gen_local_ref(&self, local: &LocalVariableRef) -> String {
-        let var = self.local(local);
+    fn gen_wasm_local_ref(&self, local: &WASMLocalVariableRef) -> String {
+        let var = self.wasm_local(local);
 
         match &var.name {
             Some(name) => { return format!("${}", name); },
@@ -218,7 +269,12 @@ impl FunctionGenerator {
     }
 
     /// Generates function code as list of instructions. Makes this instance invalid
-    pub fn generate(&self) -> Vec<String> {
+    pub fn generate(&mut self) -> Vec<String> {
+        // checking that current stack state corresponds to function return type
+        for ret in self.ret_types.iter().rev() {
+            self.stack.pop(*ret);
+        }
+
         let mut instructions = Vec::<String>::new();
 
         // generating function header
@@ -298,20 +354,20 @@ impl FunctionGenerator {
     }
 
     /// Generates getting value of a local
-    pub fn gen_local_get(&mut self, local: &LocalVariableRef) {
-        self.stack.push(self.local(local).type_);
-        self.gen_inst(&format!("local.get {}", self.gen_local_ref(local)));
+    pub fn gen_local_get(&mut self, local: &WASMLocalVariableRef) {
+        self.stack.push(self.wasm_local(local).type_);
+        self.gen_inst(&format!("local.get {}", self.gen_wasm_local_ref(local)));
     }
 
     /// Generates setting value of a local to specified string expression
-    pub fn gen_local_set_expr(&mut self, local: &LocalVariableRef, expr: &str) {
-        self.gen_inst(&format!("local.set {} {}", self.gen_local_ref(local), expr));
+    pub fn gen_local_set_expr(&mut self, local: &WASMLocalVariableRef, expr: &str) {
+        self.gen_inst(&format!("local.set {} {}", self.gen_wasm_local_ref(local), expr));
     }
 
     /// Generates setting valuf of a local to current value on top of stack
-    pub fn gen_local_set(&mut self, local: &LocalVariableRef) {
-        self.stack.pop(self.local(local).type_);
-        self.gen_inst(&format!("local.set {}", self.gen_local_ref(local)));
+    pub fn gen_local_set(&mut self, local: &WASMLocalVariableRef) {
+        self.stack.pop(self.wasm_local(local).type_);
+        self.gen_inst(&format!("local.set {}", self.gen_wasm_local_ref(local)));
     }
 
     /// Generates drop instruction
@@ -344,5 +400,71 @@ impl FunctionGenerator {
         self.stack.pop(PTR);
         self.stack.push(type_);
         self.gen_inst(&format!("{}.load", type_.generate()));
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Fr code generation
+
+    /// Adds Circom return type to function
+    pub fn add_ret_val(&mut self) {
+        for _ in 0 .. self.size_32_bit {
+            self.add_wasm_ret_type(I32);
+        }
+    }
+
+    /// Creates new Circom function parameter with specified name
+    pub fn new_param(&mut self, name: &str) -> LocalVariableRef {
+        // creating WASM parameters variables for representing Circom parameter
+        let mut vars = Vec::<WASMLocalVariableRef>::new();
+        for i in 0 .. self.size_32_bit {
+            vars.push(self.new_wasm_param(&format!("{}_{}", name, i), I32));
+        }
+
+        let var_idx = self.vars.len();
+
+        // creating Circom variable
+        let var = LocalVariable::new(name, vars);
+        self.vars.push(var);
+
+        return LocalVariableRef::new(var_idx);
+    }
+
+    /// Creates new Circom local variable with specified name
+    pub fn new_var(&mut self, name: &str) -> LocalVariableRef {
+        // creating WASM local variables for representing Circom variable
+        let mut vars = Vec::<WASMLocalVariableRef>::new();
+        for i in 0 .. self.size_32_bit {
+            vars.push(self.new_wasm_named_local(&format!("{}_{}", name, i), I32));
+        }
+
+        let var_idx = self.vars.len();
+
+        // creating Circom variable
+        let var = LocalVariable::new(name, vars);
+        self.vars.push(var);
+
+        return LocalVariableRef::new(var_idx);
+    }
+
+    /// Retrns Circom variable corresponding to variable reference
+    fn get_var(&self, var_ref: &LocalVariableRef) -> &LocalVariable {
+        return &self.vars[var_ref.idx];
+    }
+
+    /// Generates loading of variable value to stack
+    pub fn gen_load_var(&mut self, var_ref: &LocalVariableRef) {
+        let var = &self.get_var(var_ref);
+        for loc in var.locals.clone() {
+            self.gen_local_get(&loc);
+        }
+    }
+
+    /// Generates saving stack value to variable
+    pub fn gen_store_var(&mut self, var_ref: &LocalVariableRef) {
+        let var = &self.get_var(var_ref);
+        for loc in var.locals.clone().iter().rev() {
+            self.gen_local_set(&loc);
+        }
     }
 }

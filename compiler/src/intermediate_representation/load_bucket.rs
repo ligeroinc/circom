@@ -261,7 +261,7 @@ impl GenerateLigetron for LoadBucket {
                         // extracting signal number from location instruction
                         match location.as_ref() {
                             Instruction::Value(value) => {
-                                producer.gen_local_get(&producer.signal(value.value));
+                                producer.gen_load_var(&producer.signal(value.value));
                             },
                             _ => { panic!("indexed signal load location is not a constant value"); }
                         }

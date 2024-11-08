@@ -23,6 +23,8 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct LigetronProducerInfo {
+    pub prime_str: String,
+    pub size_32_bit: usize,
     pub main_comp_name: String,
     pub number_of_main_inputs: usize,
     pub number_of_main_outputs: usize
@@ -78,6 +80,24 @@ impl LigetronProducer {
         instructions.push(format!(""));
         instructions.push(format!("(memory 1 1)"));
 
+        // FR types
+        instructions.push(format!(""));
+        instructions.push(format!(";; Begin of FR types"));
+        instructions.append(&mut fr_types(&self.info.prime_str));
+        instructions.push(format!(";; End of FR types"));
+
+        // FR data
+        instructions.push(format!(""));
+        instructions.push(format!(";; Begin of FR data"));
+        instructions.append(&mut fr_data(&self.info.prime_str));
+        instructions.push(format!(";; End of FR data"));
+
+        // FR code
+        instructions.push(format!(""));
+        instructions.push(format!(";; Begin of FR code"));
+        instructions.append(&mut fr_code(&self.info.prime_str));
+        instructions.push(format!(";; End of FR code"));
+
         // module instructions
         instructions.append(&mut self.instructions);
 
@@ -114,7 +134,8 @@ impl LigetronProducer {
     /// Starts generation of new function
     pub fn new_function(&mut self, name: &str) {
         assert!(self.func_gen_.is_none());
-        self.func_gen_ = Some(Rc::new(RefCell::new(FunctionGenerator::new(name))));
+        let fgen = FunctionGenerator::new(self.info.size_32_bit, name);
+        self.func_gen_ = Some(Rc::new(RefCell::new(fgen)));
     }
 
     /// Finishes function generation
@@ -127,24 +148,24 @@ impl LigetronProducer {
     }
 
     /// Adds return type for current function
-    pub fn add_ret_type(&mut self, type_: WASMType) {
-        self.func_gen().add_ret_type(type_);
+    pub fn add_wasm_ret_type(&mut self, type_: WASMType) {
+        self.func_gen().add_wasm_ret_type(type_);
     }
 
-    /// Adds new named function parameter for current function.
+    /// Adds new WASM named function parameter for current function.
     /// Returns refence to function parameter.
-    pub fn new_param(&mut self, name: &str, type_: WASMType) -> LocalVariableRef {
-        return self.func_gen().new_param(name, type_);
+    pub fn new_wasm_param(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
+        return self.func_gen().new_wasm_param(name, type_);
     }
 
-    /// Adds new named local variable. Returns reference to variable.
-    pub fn new_named_local(&mut self, name: &str, type_: WASMType) -> LocalVariableRef {
-        return self.func_gen().new_named_local(name, type_);
+    /// Adds new WASM named local variable. Returns reference to variable.
+    pub fn new_wasm_named_local(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
+        return self.func_gen().new_wasm_named_local(name, type_);
     }
 
-    /// Adds new unnamed local variable. Returns reference to variable.
-    pub fn new_local(&mut self, type_: WASMType) -> LocalVariableRef {
-        return self.func_gen().new_local(type_);
+    /// Adds new WASM unnamed local variable. Returns reference to variable.
+    pub fn new_wasm_local(&mut self, type_: WASMType) -> WASMLocalVariableRef {
+        return self.func_gen().new_wasm_local(type_);
     }
 
 
@@ -167,17 +188,17 @@ impl LigetronProducer {
     }
 
     /// Generates getting value of a local
-    pub fn gen_local_get(&mut self, local: &LocalVariableRef) {
+    pub fn gen_local_get(&mut self, local: &WASMLocalVariableRef) {
         self.func_gen().gen_local_get(local);
     }
 
     /// Generates setting value of a local to specified string expression
-    pub fn gen_local_set_expr(&mut self, local: &LocalVariableRef, expr: &str) {
+    pub fn gen_local_set_expr(&mut self, local: &WASMLocalVariableRef, expr: &str) {
         self.func_gen().gen_local_set_expr(local, expr);
     }
 
     /// Generates setting valuf of a local to current value on top of stack
-    pub fn gen_local_set(&mut self, local: &LocalVariableRef) {
+    pub fn gen_local_set(&mut self, local: &WASMLocalVariableRef) {
         self.func_gen().gen_local_set(local);
     }
 
@@ -229,13 +250,13 @@ impl LigetronProducer {
         self.gen_drop();
 
         // saving number of arguments into local
-        let argc = self.new_named_local("argc", I32);
+        let argc = self.new_wasm_named_local("argc", I32);
         self.gen_const(PTR, 0);
         self.gen_load(I32);
         self.gen_local_set(&argc);
 
         // saving size of buffer for arguments into local
-        let argv_size = self.new_named_local("argv_size", I32);
+        let argv_size = self.new_wasm_named_local("argv_size", I32);
         self.gen_const(PTR, 4);
         self.gen_load(I32);
         self.gen_local_set(&argv_size);
@@ -328,7 +349,8 @@ impl LigetronProducer {
     pub fn new_template(&mut self, name: &str, signals: &Vec<SignalInfo>) {
         // creating new template generator
         assert!(self.template_gen_.is_none());
-        self.template_gen_ = Some(RefCell::new(TemplateGenerator::new(name.to_string(), signals)));
+        let tgen = TemplateGenerator::new(self.info.size_32_bit, name.to_string(), signals);
+        self.template_gen_ = Some(RefCell::new(tgen));
 
         // saving reference to function generator created by template generator
         assert!(self.func_gen_.is_none());
@@ -356,11 +378,27 @@ impl LigetronProducer {
     pub fn signal(&self, sig_num: usize) -> LocalVariableRef {
         return self.template_gen().signal(sig_num);
     }
+
+
+    ////////////////////////////////////////////////////////////
+    // Fr code generation
+
+    /// Generates loading of variable value to stack
+    pub fn gen_load_var(&mut self, var_ref: &LocalVariableRef) {
+        self.func_gen().gen_load_var(var_ref);
+    }
+
+    /// Generates saving stack value to variable
+    pub fn gen_store_var(&mut self, var_ref: &LocalVariableRef) {
+        self.func_gen().gen_store_var(var_ref);
+    }
 }
 
 impl Default for LigetronProducerInfo {
     fn default() -> Self {
         return LigetronProducerInfo {
+            prime_str: "bn128".to_string(),
+            size_32_bit: 8,
             main_comp_name: "MAIN_COMP".to_string(),
             number_of_main_inputs: 0,
             number_of_main_outputs: 0

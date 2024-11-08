@@ -468,7 +468,7 @@ impl GenerateLigetron for StoreBucket {
                         match location.as_ref() {
                             Instruction::Value(value) => {
                                 self.src.as_ref().generate_ligetron(producer);
-                                producer.gen_local_set(&producer.signal(value.value));
+                                producer.gen_store_var(&producer.signal(value.value));
                             },
                             _ => { panic!("indexed signal store location is not a constant value"); }
                         }

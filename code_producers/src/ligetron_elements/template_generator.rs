@@ -63,12 +63,15 @@ pub struct TemplateGenerator {
 
 impl TemplateGenerator {
     /// Constructs new template generator
-    pub fn new(name: String, signals: &Vec<SignalInfo>) -> TemplateGenerator {
+    pub fn new(size_32_bit: usize,
+               name: String,
+               signals: &Vec<SignalInfo>) -> TemplateGenerator {
+
         let func_name = format!("{}_template", &name);
         let mut templ_gen = TemplateGenerator {
             name_: name.clone(),
             signals: Vec::<Signal>::new(),
-            func_gen_: Rc::new(RefCell::new(FunctionGenerator::new(&func_name)))
+            func_gen_: Rc::new(RefCell::new(FunctionGenerator::new(size_32_bit, &func_name)))
         };
 
         templ_gen.init(signals);
@@ -89,7 +92,7 @@ impl TemplateGenerator {
                 .enumerate()
                 .filter(|(_, s)| s.kind == SignalKind::Input) {
             let par_name = format!("input_signal_{}", idx);
-            let par = self.func_gen().new_param(&par_name, I64);
+            let par = self.func_gen().new_param(&par_name);
             sig_vars[idx] = Some(par);
         }
 
@@ -98,11 +101,11 @@ impl TemplateGenerator {
                 .enumerate().filter(|(_, s)| s.kind == SignalKind::Output) {
             // creating local variable
             let var_name = format!("output_signal_{}", idx);
-            let var = self.func_gen().new_named_local(&var_name, I64);
+            let var = self.func_gen().new_var(&var_name);
             sig_vars[idx] = Some(var);
 
             // adding function return type
-            self.func_gen().add_ret_type(I64);
+            self.func_gen().add_ret_val();
         }
     
         // creating local variables for intermediate signals
@@ -111,7 +114,7 @@ impl TemplateGenerator {
                 .enumerate()
                 .filter(|(_, s)| s.kind == SignalKind::Intermediate) {
             let var_name = format!("intermediate_signal_{}", idx);
-            let var = self.func_gen().new_named_local(&var_name, I64);
+            let var = self.func_gen().new_var(&var_name);
             sig_vars[idx] = Some(var);
         }
 
@@ -147,13 +150,6 @@ impl TemplateGenerator {
         return self.signals[idx].var.clone();
     }
 
-    /// Returns vector of variables for output signals
-    pub fn output_signals(&self) -> Vec<LocalVariableRef> {
-        return self.signals.iter()
-            .filter(|s| s.kind == SignalKind::Output)
-            .map(|s| s.var.clone()).collect();
-    }
-
     /// Builds and returns run function type for this template
     pub fn function_type(&self) -> FunctionType {
         let mut ftype = FunctionType::new();
@@ -178,7 +174,7 @@ impl TemplateGenerator {
         // loading output signals on stack before return
         self.func_gen().gen_comment("returning output signals");
         for sig in self.signals.iter().filter(|s| s.kind == SignalKind::Output) {
-            self.func_gen().gen_local_get(&sig.var);
+            self.func_gen().gen_load_var(&sig.var);
         }
     }
 }

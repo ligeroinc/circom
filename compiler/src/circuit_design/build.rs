@@ -253,8 +253,13 @@ fn initialize_wasm_producer(vcp: &VCP, database: &TemplateDB, wat_flag:bool, ver
 
 // Ligetron producer builder
 fn initialize_ligetron_producer(vcp: &VCP, _database: &TemplateDB, _wat_flag: bool, _version: &str) -> LigetronProducerInfo {
+    use program_structure::utils::constants::UsefulConstants;
+
     let initial_node = vcp.get_main_id();
+    let prime = UsefulConstants::new(&vcp.prime).get_p().clone();
     return LigetronProducerInfo {
+        prime_str: vcp.prime.clone(),
+        size_32_bit: prime.bits() / 32 + if prime.bits() % 32 != 0 { 1 } else { 0 },        
         main_comp_name: vcp.get_main_instance().unwrap().template_header.clone(),
         number_of_main_inputs: vcp.templates[initial_node].number_of_inputs,
         number_of_main_outputs: vcp.templates[initial_node].number_of_outputs
