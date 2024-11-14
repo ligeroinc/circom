@@ -39,6 +39,8 @@ impl ToString for TemplateCodeInfo {
 }
 impl WriteWasm for TemplateCodeInfo {
     fn produce_wasm(&self, producer: &WASMProducer) -> Vec<String> {
+        println!("TEMPLATE: {}", self.to_string());
+
         use code_producers::wasm_elements::wasm_code_generator::*;
         // create function code
         let mut instructions = vec![];

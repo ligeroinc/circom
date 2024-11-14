@@ -1,20 +1,25 @@
 
-mod types;
-mod function_generator;
+mod func;
+mod memory_stack;
 mod template_generator;
+mod types;
+mod wasm;
 
+use serde_json::Value;
 pub use template_generator::SignalKind;
 pub use template_generator::SignalInfo;
 
-use types::*;
-use function_generator::*;
+use func::*;
+use memory_stack::*;
 use template_generator::*;
+use types::*;
+use wasm::*;
+
 use super::wasm_elements::wasm_code_generator::fr_types;
 use super::wasm_elements::wasm_code_generator::fr_data;
 use super::wasm_elements::wasm_code_generator::fr_code;
 
 use WASMType::*;
-
 
 use std::rc::Rc;
 use std::cell::{RefCell, Ref, RefMut};
@@ -34,17 +39,20 @@ pub struct LigetronProducerInfo {
 pub struct LigetronProducer {
     info: LigetronProducerInfo,
 
-    /// Vector of generated module imports
-    imports: Vec<FunctionImport>,
+    /// WASM module being generated
+    module_: Rc<RefCell<Module>>,
+
+    /// Referene to global variable for storing current memory stack frame pointer
+    stack_ptr: GlobalVariableRef,
 
     /// Vector of generated module instructions
     instructions: Vec<String>,
 
     /// Vector of function types for generated templates
-    templates: HashMap<String, FunctionType>,
+    templates: HashMap<String, WASMFunctionType>,
 
     /// Generator for current function being generated
-    func_gen_: Option<Rc<RefCell<FunctionGenerator>>>,
+    func_gen_: Option<Rc<RefCell<CircomFunction>>>,
 
     /// Generator for current template being generated
     template_gen_: Option<RefCell<TemplateGenerator>>
@@ -53,14 +61,28 @@ pub struct LigetronProducer {
 impl LigetronProducer {
     /// Creates new producer
     pub fn new(info: &LigetronProducerInfo) -> LigetronProducer {
+        // creating new module for generated code
+        let module = Rc::new(RefCell::new(Module::new()));
+
+        // creating global variable for current memory stack pointer
+        let stack_ptr = module.borrow_mut().new_global(format!("stack_ptr"),
+                                                       WASMType::PTR,
+                                                       format!("(i32.const 0)")); 
+
         return LigetronProducer {
             info: info.clone(),
-            imports: Vec::<FunctionImport>::new(),
-            templates: HashMap::<String, FunctionType>::new(),
+            module_: module,
+            stack_ptr: stack_ptr,
+            templates: HashMap::<String, WASMFunctionType>::new(),
             instructions: Vec::<String>::new(),
             func_gen_: None,
             template_gen_: None
         };
+    }
+
+    /// Returns reference to module being generated
+    pub fn module(&self) -> RefMut<Module> {
+        return self.module_.as_ref().borrow_mut();
     }
 
     /// Generates final code for module. Makes this instance invalid
@@ -72,9 +94,7 @@ impl LigetronProducer {
 
         // imports
         instructions.push(format!(""));
-        for imp in &self.imports {
-            instructions.push(imp.generate());
-        }
+        instructions.append(&mut self.module().generate_imports());
 
         // global memory definition
         instructions.push(format!(""));
@@ -91,6 +111,10 @@ impl LigetronProducer {
         instructions.push(format!(";; Begin of FR data"));
         instructions.append(&mut fr_data(&self.info.prime_str));
         instructions.push(format!(";; End of FR data"));
+
+        // module globals
+        instructions.push(format!(""));
+        instructions.append(&mut self.module().generate_globals());
 
         // FR code
         instructions.push(format!(""));
@@ -112,19 +136,8 @@ impl LigetronProducer {
     ////////////////////////////////////////////////////////////
     // Functions
 
-    /// Adds function import into generated module. Returns reference of imported function
-    pub fn import_function(&mut self,
-                           name: &str,
-                           type_: FunctionType,
-                           module_name: &str,
-                           function_name: &str) -> FunctionRef {
-        let import = FunctionImport::new(name, type_.clone(), module_name, function_name);
-        self.imports.push(import);
-        return FunctionRef::new(name, type_);
-    }
-
     /// Returns reference to current function generator
-    pub fn func_gen(&self) -> RefMut<FunctionGenerator> {
+    pub fn func_gen(&self) -> RefMut<CircomFunction> {
         return self.func_gen_
             .as_ref()
             .expect("no current function generator")
@@ -132,9 +145,17 @@ impl LigetronProducer {
     }
 
     /// Starts generation of new function
-    pub fn new_function(&mut self, name: &str) {
+    pub fn new_function(&mut self,
+                        name: &str,
+                        params: &Vec<(String, ValueType)>,
+                        ret_types: Vec<ValueType>) {
         assert!(self.func_gen_.is_none());
-        let fgen = FunctionGenerator::new(self.info.size_32_bit, name);
+        let fgen = CircomFunction::new(self.info.size_32_bit,
+                                          self.module_.clone(),
+                                          self.stack_ptr,
+                                          name.to_string(),
+                                          params,
+                                          ret_types);
         self.func_gen_ = Some(Rc::new(RefCell::new(fgen)));
     }
 
@@ -228,16 +249,16 @@ impl LigetronProducer {
 
     /// Generates entry point function for program.
     pub fn generate_entry(&mut self, func_name: String) {
-        self.new_function(&func_name);
+        self.new_function(&func_name, &vec![], vec![]);
         self.func_gen().set_export_name(&func_name);
 
         // we use beginning of global memory (at address 0) to temporarly
         // store information about command line arguments
 
         // getting number of arguments and buffer size for arguments.
-        let args_sizes_get = self.import_function(
+        let args_sizes_get = self.module().import_function(
             "args_sizes_get",
-            FunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
+            WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
             "wasi_snapshot_preview1",
             "args_sizes_get");
         self.gen_comment("getting size of program arguments");
@@ -262,9 +283,9 @@ impl LigetronProducer {
         self.gen_local_set(&argv_size);
 
         // getting arguments
-        let args_get = self.import_function(
+        let args_get = self.module().import_function(
             "args_get",
-            FunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
+            WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
             "wasi_snapshot_preview1",
             "args_get");
         self.gen_comment("getting program arguments");
@@ -302,9 +323,9 @@ impl LigetronProducer {
 
         // calling exit function at the end of entry function
         // TODO: pass correct exit code?
-        let proc_exit = self.import_function(
+        let proc_exit = self.module().import_function(
             "proc_exit",
-            FunctionType::new().with_params(&[I32]),
+            WASMFunctionType::new().with_params(&[I32]),
             "wasi_snapshot_preview1",
             "proc_exit");
         self.gen_comment("calling exit function");
@@ -349,7 +370,11 @@ impl LigetronProducer {
     pub fn new_template(&mut self, name: &str, signals: &Vec<SignalInfo>) {
         // creating new template generator
         assert!(self.template_gen_.is_none());
-        let tgen = TemplateGenerator::new(self.info.size_32_bit, name.to_string(), signals);
+        let tgen = TemplateGenerator::new(self.info.size_32_bit,
+                                          self.module_.clone(),
+                                          name.to_string(),
+                                          signals,
+                                          self.stack_ptr);
         self.template_gen_ = Some(RefCell::new(tgen));
 
         // saving reference to function generator created by template generator
@@ -375,7 +400,7 @@ impl LigetronProducer {
     }
 
     /// Returns reference to local variable for signal with specified number
-    pub fn signal(&self, sig_num: usize) -> LocalVariableRef {
+    pub fn signal(&self, sig_num: usize) -> CircomLocalVariableRef {
         return self.template_gen().signal(sig_num);
     }
 
@@ -384,12 +409,12 @@ impl LigetronProducer {
     // Fr code generation
 
     /// Generates loading of variable value to stack
-    pub fn gen_load_var(&mut self, var_ref: &LocalVariableRef) {
+    pub fn gen_load_var(&mut self, var_ref: &CircomLocalVariableRef) {
         self.func_gen().gen_load_var(var_ref);
     }
 
     /// Generates saving stack value to variable
-    pub fn gen_store_var(&mut self, var_ref: &LocalVariableRef) {
+    pub fn gen_store_var(&mut self, var_ref: &CircomLocalVariableRef) {
         self.func_gen().gen_store_var(var_ref);
     }
 }
