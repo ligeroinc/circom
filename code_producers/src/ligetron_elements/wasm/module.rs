@@ -21,7 +21,7 @@ impl WASMGlobalVariable {
 
     /// Generates WASM for global variable
     pub fn generate(&self) -> String {
-        return format!("(global ${} {} {})", self.name, self.type_.generate(), self.init_expr);
+        return format!("(global ${} (mut {}) {})", self.name, self.type_.generate(), self.init_expr);
     }
 }
 
