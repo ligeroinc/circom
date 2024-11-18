@@ -10,7 +10,7 @@ use std::cell::{RefCell, RefMut};
 /// WASM instruction generator
 pub struct InstructionGenerator {
     /// Reference to module being generated
-    module_: Rc<RefCell<Module>>,
+    module_: Rc<RefCell<WASMModule>>,
 
     /// Reference to WASM stack frame for current function
     wasm_frame_: Rc<RefCell<WASMStackFrame>>,
@@ -21,7 +21,7 @@ pub struct InstructionGenerator {
 
 impl InstructionGenerator {
     /// Creates new instruction generator
-    pub fn new(module: Rc<RefCell<Module>>,
+    pub fn new(module: Rc<RefCell<WASMModule>>,
                wasm_frame: Rc<RefCell<WASMStackFrame>>) -> InstructionGenerator {
         return InstructionGenerator {
             module_: module,
@@ -31,7 +31,7 @@ impl InstructionGenerator {
     }
 
     /// Returns reference to module being generated
-    pub fn module(&self) -> RefMut<Module> {
+    pub fn module(&self) -> RefMut<WASMModule> {
         return self.module_.as_ref().borrow_mut();
     }
 
@@ -45,10 +45,17 @@ impl InstructionGenerator {
         return self.insts.clone();
     }
 
-    /// Appends instruction to function body
+    /// Appends instruction to list of instructions
     /// TODO: make private
     pub fn gen_inst(&mut self, instruction: &str) {
         self.insts.push(instruction.to_string());
+    }
+
+    /// Inserts instructions from another generator into beginning of list of instructions
+    pub fn insert_insts_begin(&mut self, inst_gen: &InstructionGenerator) {
+        let mut new_insts = inst_gen.instructions();
+        new_insts.append(&mut self.insts);
+        self.insts = new_insts;
     }
 
     /// Generates empty code line
@@ -63,9 +70,9 @@ impl InstructionGenerator {
     }
 
     /// Generates call instruction
-    pub fn gen_call(&mut self, func: FunctionRef) {
+    pub fn gen_call(&mut self, func: &WASMFunctionRef) {
         // popping parameters from the wasm stack
-        for par in func.type_.params() {
+        for par in func.type_.params().iter().rev() {
             self.wasm_frame().pop(*par);
         }
 
@@ -104,14 +111,14 @@ impl InstructionGenerator {
     }
 
     /// Generates getting value of a global
-    pub fn gen_global_get(&mut self, var_ref: &GlobalVariableRef) {
+    pub fn gen_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
         let (ref_str, var_type) = self.module().get_global_ref_and_type(var_ref);
         self.gen_inst(&format!("global.get {}", ref_str));
         self.wasm_frame().push(var_type);
     }
 
     /// Generates setting valuf of a local to current value on top of wasm stack
-    pub fn gen_global_set(&mut self, var_ref: &GlobalVariableRef) {
+    pub fn gen_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
         let (ref_str, var_type) = self.module().get_global_ref_and_type(var_ref);
         self.gen_inst(&format!("global.set {}", ref_str));
         self.wasm_frame().pop(var_type);
@@ -160,5 +167,12 @@ impl InstructionGenerator {
         self.wasm_frame().pop(WASMType::PTR);
         self.wasm_frame().push(tp);
         self.gen_inst(&format!("{}.load", tp.generate()));
+    }
+
+    /// Generates store instruction
+    pub fn gen_store(&mut self, tp: WASMType) {
+        self.wasm_frame().pop(tp);
+        self.wasm_frame().pop(WASMType::PTR);
+        self.gen_inst(&format!("{}.store", tp.generate()));
     }
 }

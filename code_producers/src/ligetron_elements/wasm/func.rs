@@ -12,7 +12,7 @@ use std::rc::Rc;
 /// Represens current WASM function being generated
 pub struct WASMFunction {
     /// Reference to parent module being generaed
-    module_: Rc<RefCell<Module>>,
+    module_: Rc<RefCell<WASMModule>>,
 
     /// Reference to WASM stack frame for this function
     frame: Rc<RefCell<WASMStackFrame>>,
@@ -32,18 +32,10 @@ pub struct WASMFunction {
 
 impl WASMFunction {
     /// Creates new WASM function
-    pub fn new(module: Rc<RefCell<Module>>,
-               name: String,
-               params: &Vec<(String, WASMType)>,
-               ret_types: Vec<WASMType>) -> WASMFunction {
+    pub fn new(module: Rc<RefCell<WASMModule>>, name: String) -> WASMFunction {
 
         // creating new wasm stack frame for this function
-        let mut frame = WASMStackFrame::new();
-        for (name, tp) in params {
-            frame.new_param(name, *tp);
-        }
-
-        let frame_rc = Rc::new(RefCell::new(frame));
+        let frame_rc = Rc::new(RefCell::new(WASMStackFrame::new()));
 
         // creating instructions generator for this function
         let inst_gen = Rc::new(RefCell::new(InstructionGenerator::new(module.clone(),
@@ -54,7 +46,7 @@ impl WASMFunction {
             frame: frame_rc,
             inst_gen: inst_gen,
             name: name,
-            ret_types: ret_types,
+            ret_types: vec![],
             export_name: None
         };
     }
@@ -104,15 +96,16 @@ impl WASMFunction {
         return self.frame.borrow_mut().new_local(type_);
     }
 
-    /// Generates reference to WASM local
-    pub fn gen_local_ref(&self, local: &WASMLocalVariableRef) -> String {
-        let frame = self.frame.borrow_mut();
-        let var = frame.local(local);
+    /// Returns name and type of local
+    pub fn local(&self, loc_ref: &WASMLocalVariableRef) -> (Option<String>, WASMType) {
+        let frame = self.frame.borrow();
+        let loc = frame.local(loc_ref);
+        return (loc.name.clone(), loc.type_);
+    }
 
-        match &var.name {
-            Some(name) => { return format!("${}", name); },
-            None => { return format!("{}", local.idx); }
-        }
+    /// Generates reference to WASM local
+    pub fn gen_local_ref(&self, lref: &WASMLocalVariableRef) -> String {
+        return self.frame.borrow().gen_local_ref(lref)
     }
 
     /// Sets function export name
@@ -158,7 +151,9 @@ impl WASMFunction {
 
         // adding function body
         instructions.push(format!(""));
-        instructions.append(&mut self.inst_gen.borrow_mut().instructions());
+        for inst in self.inst_gen.borrow_mut().instructions() {
+            instructions.push(format!("    {}", inst));
+        }
 
         // // generating function exit code for memory stack
         // instructions.append(&mut self.mem_frame().gen_func_exit(&self.stack_ptr));
@@ -189,7 +184,7 @@ impl WASMFunction {
     }
 
     /// Generates call instruction
-    pub fn gen_call(&mut self, func: FunctionRef) {
+    pub fn gen_call(&mut self, func: &WASMFunctionRef) {
         self.inst_gen.borrow_mut().gen_call(func);
     }
 
@@ -208,6 +203,16 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_local_get(var_ref);
     }
 
+    /// Generates getting value of a global
+    pub fn gen_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
+        self.inst_gen.borrow_mut().gen_global_get(var_ref);
+    }
+
+    /// Generates setting value of a global
+    pub fn gen_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
+        self.inst_gen.borrow_mut().gen_global_set(var_ref);
+    }
+
     /// Generates drop instruction
     pub fn gen_drop(&mut self) {
         self.inst_gen.borrow_mut().gen_drop();
@@ -218,13 +223,23 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_const(type_, value);
     }
 
+    /// Generates add instruction
+    pub fn gen_add(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_add(tp);
+    }
+
     /// Generates mul instruction
-    pub fn gen_mul(&mut self, type_: WASMType) {
-        self.inst_gen.borrow_mut().gen_mul(type_);
+    pub fn gen_mul(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_mul(tp);
     }
 
     /// Generates load instruction
     pub fn gen_load(&mut self, tp: WASMType) {
         self.inst_gen.borrow_mut().gen_load(tp);
+    }
+
+    /// Generates store instruction
+    pub fn gen_store(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_store(tp);
     }
 }

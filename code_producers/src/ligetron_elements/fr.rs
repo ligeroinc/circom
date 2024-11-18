@@ -1,10 +1,10 @@
 
-// /// Reference to FR value
-// struct FrValueRef {
-//     a: i32
-// }
+use super::types::*;
 
-// /// Reference to FR value located in memory
-// struct MemoryFrValueRef {
 
-// }
+/// FR arithmetics context, stores references to FR functions
+#[derive(Clone)]
+pub struct FRContext {
+    pub copy: CircomFunctionRef,
+    pub raw_copy: CircomFunctionRef
+}

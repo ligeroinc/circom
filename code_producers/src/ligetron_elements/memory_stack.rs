@@ -5,8 +5,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 
-/// Local variable in memory stack frame. Represents chunk of allocated memory
-/// in stack frame in global memory.
+/// Local variable allocated in memory stack frame. Local variables are live across
+/// the entire function call.
 struct MemoryStackLocal {
     /// Offset of local in stack frame
     offset: usize,
@@ -25,8 +25,8 @@ impl MemoryStackLocal {
     }
 }
 
-
 /// Reference to local in memory stack frame
+#[derive(Clone)]
 pub struct MemoryStackLocalRef {
     idx: usize
 }
@@ -41,10 +41,58 @@ impl MemoryStackLocalRef {
 }
 
 
+/// Value allocated in memory stack frame
+struct MemoryStackValue {
+    /// Offset of value from beginning of temporary memory for current frame
+    offset: usize,
+
+    /// Size of allocated value
+    size: usize,
+
+    /// Was this value deallocated and popped from stack?
+    deallocated: bool
+}
+
+impl MemoryStackValue {
+    /// Creates new memory stack value
+    fn new(offset: usize, size: usize) -> MemoryStackValue {
+        return MemoryStackValue {
+            offset: offset,
+            size: size,
+            deallocated: false
+        };
+    }
+}
+
+
+/// Reference to memory stack value
+#[derive(Clone)]
+pub struct MemoryStackValueRef {
+    value_rc: Rc<RefCell<MemoryStackValue>>
+}
+
+impl MemoryStackValueRef {
+    /// Creates new memory stack value reference
+    fn new(value_rc: Rc<RefCell<MemoryStackValue>>) -> MemoryStackValueRef {
+        return MemoryStackValueRef {
+            value_rc: value_rc
+        };
+    }
+
+    /// Returns offset of value
+    pub fn offset(&self) -> usize {
+        return self.value_rc.borrow().offset;
+    }
+}
+
+
 /// Stack frame in global memory
 pub struct MemoryStackFrame {
     /// Reference to module being generated
-    module: Rc<RefCell<Module>>,
+    module: Rc<RefCell<WASMModule>>,
+
+    /// Reference to global variable for memory stack pointer
+    stack_ptr: WASMGlobalVariableRef,
 
     /// Reference to instructions genererator for current function
     inst_gen: Rc<RefCell<InstructionGenerator>>,
@@ -58,16 +106,20 @@ pub struct MemoryStackFrame {
     /// Vector of locals in allocated stack frame
     locals: Vec<MemoryStackLocal>,
 
-    /// Size of locals in stack frame
+    /// Current size of locals allocated in stack frame
     locals_size: usize,
 
+    /// Current size of temporary stack in stack frame (allocated after locals)
+    stack_size: usize,
+
     /// Stack values
-    values: Vec<usize>
+    values: Vec<Rc<RefCell<MemoryStackValue>>>
 }
 
 impl MemoryStackFrame {
     /// Creates new stack frame
-    pub fn new(module: Rc<RefCell<Module>>,
+    pub fn new(module: Rc<RefCell<WASMModule>>,
+               stack_ptr: WASMGlobalVariableRef,
                inst_gen: Rc<RefCell<InstructionGenerator>>,
                wasm_stack_frame: Rc<RefCell<WASMStackFrame>>) -> MemoryStackFrame {
 
@@ -77,11 +129,13 @@ impl MemoryStackFrame {
 
         return MemoryStackFrame {
             module: module,
+            stack_ptr: stack_ptr,
             inst_gen: inst_gen,
             wasm_stack_frame: wasm_stack_frame,
             frame_base: frame_base,
             locals: vec![],
             locals_size: 0,
+            stack_size: 0,
             values: vec![]
         };
     }
@@ -100,95 +154,112 @@ impl MemoryStackFrame {
         return MemoryStackLocalRef::new(idx);
     }
 
-    /// Pushes value of specified size on top of stack
-    pub fn push(&mut self, size: usize) {
-        self.values.push(size);
+    /// Allocates values of specified sizes on top of stack. Returns references to allocated values.
+    pub fn alloc(&mut self, sizes: Vec<usize>) -> Vec<MemoryStackValueRef> {
+        // creating new stack values
+        let mut res = Vec::<MemoryStackValueRef>::new();
+        let mut total_size: usize = 0;
+        for size in sizes {
+            let val = MemoryStackValue::new(self.stack_size, size);
+            let val_rc = Rc::new(RefCell::new(val));
+            self.values.push(val_rc.clone());
+            self.stack_size += size;
+            total_size += size;
+            res.push(MemoryStackValueRef::new(val_rc));
+        }
+
+        // increasing global stack pointer
+        self.inst_gen.borrow_mut().gen_global_get(&self.stack_ptr);
+        self.inst_gen.borrow_mut().gen_const(WASMType::I32, total_size as i64);
+        self.inst_gen.borrow_mut().gen_add(WASMType::PTR);
+        self.inst_gen.borrow_mut().gen_global_set(&self.stack_ptr);
+
+        return res;
     }
 
-    /// Pops value of specified size from top of stack
-    pub fn pop(&mut self, size: usize) {
-        let val = self.values.pop();
-        match val {
-            Some(sz) => {
-                if sz != size {
-                    panic!("invalid size of current stack value: expected: {}, found: {}",
-                           size, sz);
+    /// Pops specified number of values from top of stack
+    pub fn pop(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+
+        // removing values from top of stack and marking them deallocated,
+        // calculating total size of deallocated stack space
+        let mut total_size = 0;
+        for _ in 0 .. count {
+            match self.values.pop() {
+                Some(val_rc) => {
+                    val_rc.borrow_mut().deallocated = true;
+                    total_size += val_rc.borrow().size;
+                },
+                None => {
+                    panic!("Can't pop value from empty stack");
                 }
-            },
-            None => { panic!("can't pop value from empty stack"); }
+            }
+        }
+
+        // decreasing global stack pointer
+        self.inst_gen.borrow_mut().gen_global_get(&self.stack_ptr);
+        self.inst_gen.borrow_mut().gen_const(WASMType::I32, -1 * (total_size as i64));
+        self.inst_gen.borrow_mut().gen_add(WASMType::PTR);
+        self.inst_gen.borrow_mut().gen_global_set(&self.stack_ptr);
+    }
+
+    /// Generates loading address of memory stack local to WASM stack
+    pub fn gen_load_local_addr(&self, loc_ref: &MemoryStackLocalRef) {
+        let loc = &self.locals[loc_ref.idx];
+        self.inst_gen.borrow_mut().gen_local_get(&self.frame_base);
+        if loc.offset != 0 {
+            self.inst_gen.borrow_mut().gen_const(WASMType::I32, loc.offset as i64);
+            self.inst_gen.borrow_mut().gen_add(WASMType::PTR);
+        }
+    }
+
+    /// Generates loading address of memory stack value to WASM stack
+    pub fn gen_load_value_addr(&self, val_ref: &MemoryStackValueRef) {
+        let val = val_ref.value_rc.borrow();
+
+        if val.deallocated {
+            panic!("Trying to load address of deallocated value");
+        }
+
+        if val.offset >= self.stack_size {
+            panic!("Stack value offset is less than stack size");
+        }
+
+        let val_stack_ptr_offset = self.stack_size - val.offset;
+        self.inst_gen.borrow_mut().gen_global_get(&self.stack_ptr);
+        if val_stack_ptr_offset != 0 {
+            self.inst_gen.borrow_mut().gen_const(WASMType::I32, -1 * val_stack_ptr_offset as i64);
+            self.inst_gen.borrow_mut().gen_add(WASMType::PTR);
         }
     }
 
     /// Generates function entry code for allocating stack
-    pub fn gen_func_entry(&self, stack_ptr: &GlobalVariableRef) -> Vec<String> {
+    pub fn gen_func_entry(&self) {
         let mut gen = InstructionGenerator::new(self.module.clone(), self.wasm_stack_frame.clone());
 
         // saving current value of stack pointer into frame base variable
-        gen.gen_global_get(stack_ptr);
+        gen.gen_comment("saving original value of memory stack pointer");
+        gen.gen_global_get(&self.stack_ptr);
         gen.gen_local_set(&self.frame_base);
 
         // adjusting current stack pointer to preserve space for local variables
-        gen.gen_global_get(stack_ptr);
+        gen.gen_comment("adjusting value of memory stack pointer for local variables");
+        gen.gen_global_get(&self.stack_ptr);
         gen.gen_const(WASMType::I32, self.locals_size as i64);
         gen.gen_add(WASMType::PTR);
-        gen.gen_global_set(stack_ptr);
+        gen.gen_global_set(&self.stack_ptr);
 
-        return gen.instructions();
+        // adding instructions into beginning of current function
+        self.inst_gen.borrow_mut().insert_insts_begin(&gen);
     }
 
     /// Generates function exit code for deallocating stack
-    pub fn gen_func_exit(&self, stack_ptr: &GlobalVariableRef) -> Vec<String> {
+    pub fn gen_func_exit(&self) {
         // restoring original value of stack frame pointer
-        let mut gen = InstructionGenerator::new(self.module.clone(), self.wasm_stack_frame.clone());
-        gen.gen_local_get(&self.frame_base);
-        gen.gen_global_set(stack_ptr);
-
-        return gen.instructions();
+        self.inst_gen.borrow_mut().gen_comment("restoring memory stack state");
+        self.inst_gen.borrow_mut().gen_local_get(&self.frame_base);
+        self.inst_gen.borrow_mut().gen_global_set(&self.stack_ptr);
     }
 }
-
-
-// /// Global memory stack
-// pub struct MemoryStack {
-//     /// Reference to module being generated
-//     module: Rc<RefCell<Module>>,
-
-//     /// Reference to global variable containing current stack pointer
-//     stack_ptr: GlobalVariableRef,
-
-//     /// Vector of stack frames
-//     frames: Vec<MemoryStackFrame>
-// }
-
-// impl MemoryStack {
-//     /// Creates new empty stack
-//     pub fn new(module: Rc<RefCell<Module>>, stack_ptr_name: String) -> MemoryStack {
-//         // creating new global variable for stack pointer
-//         // TODO: pass correct initial address
-//         let stack_ptr = module.borrow_mut().new_global(stack_ptr_name,
-//                                                        WASMType::PTR,
-//                                                        "(i32.const 0)".to_string());
-
-//         return MemoryStack {
-//             module: module,
-//             stack_ptr: stack_ptr,
-//             frames: vec![]
-//         }
-//     }
-
-//     /// Pushes new frame on top of stack
-//     pub fn push_frame(&mut self) {
-//         self.frames.push(MemoryStackFrame::new());
-//     }
-
-//     /// Pops stack frame from top of stack
-//     pub fn pop_frame(&mut self) {
-//         let frame = self.frames.pop();
-//         assert!(frame.is_some());
-//     }
-
-//     /// Reurns size of current stack frame
-//     pub fn frame_size(&self) -> usize {
-//         return self.frames.last().expect("stack is empty").size;
-//     }
-// }

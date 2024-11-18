@@ -1,7 +1,9 @@
 
 use super::func::*;
 use super::types::*;
+use super::value::*;
 use super::wasm::*;
+use super::FRContext;
 
 use serde_json::Value;
 use WASMType::*;
@@ -13,6 +15,7 @@ use std::cell::{RefCell, Ref, RefMut};
 /// Signal kind
 #[derive(PartialEq)]
 #[derive(Clone)]
+#[derive(Copy)]
 pub enum SignalKind {
     Input,
     Output,
@@ -39,12 +42,12 @@ impl SignalInfo {
 /// Represents a signal in a template
 struct Signal {
     kind: SignalKind,
-    var: CircomLocalVariableRef
+    var: CircomValueRef
 }
 
 impl Signal {
     /// Creates new signal
-    pub fn new(kind: SignalKind, var: CircomLocalVariableRef) -> Signal {
+    pub fn new(kind: SignalKind, var: CircomValueRef) -> Signal {
         return Signal {
             kind: kind,
             var: var
@@ -62,114 +65,57 @@ pub struct TemplateGenerator {
     signals: Vec<Signal>,
 
     /// Function generator for generating template run function
-    func_gen_: Rc<RefCell<CircomFunction>>
+    func_: Rc<RefCell<CircomFunction>>
 }
 
 impl TemplateGenerator {
     /// Constructs new template generator
     pub fn new(size_32_bit: usize,
-               module: Rc<RefCell<Module>>,
+               fr: FRContext,
+               module: Rc<RefCell<WASMModule>>,
                name: String,
-               signals: &Vec<SignalInfo>,
-               stack_ptr: GlobalVariableRef) -> TemplateGenerator {
-
-        // creating vector of function parameters for input signals
-        let mut params: Vec<(String, ValueType)> = Vec::new();
-        for (idx, sig) in signals.iter()
-                .enumerate()
-                .filter(|(_, s)| s.kind == SignalKind::Input) {
-            for i in 0 .. size_32_bit {
-                let par_name = format!("input_signal_{}_{}", idx, i);
-                params.push((par_name, ValueType::FR));
-            }
-        }
-
-        // creating vector of return types for output signals
-        let mut ret_types = Vec::<ValueType>::new();
-        for _ in signals.iter().filter(|s| s.kind == SignalKind::Output) {
-            for _ in 0 .. size_32_bit {
-                ret_types.push(ValueType::FR);
-            }
-        }
+               sig_info: &Vec<SignalInfo>,
+               n_local_vars: usize,
+               stack_ptr: WASMGlobalVariableRef) -> TemplateGenerator {
 
         // creating function generator for template run function
         let func_name = format!("{}_template", &name);
-        let fgen = CircomFunction::new(size_32_bit,
-                                       module,
-                                       stack_ptr,
-                                       func_name,
-                                       &params,
-                                       ret_types);
+        let mut func = CircomFunction::new(size_32_bit,
+                                           fr,
+                                           module,
+                                           stack_ptr,
+                                           func_name,
+                                           n_local_vars);
 
-        // // creating list of local variables for all signals
-        // let mut par_idx: usize = 0;
-        // let mut signals = Vec::<Signal>::new();
-        // for (idx, sig) in signals.iter().enumerate() {
-        //     match &sig.kind {
-        //         SignalKind::Input => {
-        //             for i in 0 .. size_32_bit {
-        //                 signals.push(Signal::new(SignalKind::Input, ));
-        //             }
-        //         },
-        //         SignalKind::Output => {},
-        //         SignalKind::Intermediate => {},
-        //     }
-        // }
+        // processing template signals
+        let mut signals = Vec::<Signal>::new();
+        for (idx, sig) in sig_info.iter().enumerate() {
+            let sig_val_ref = match sig.kind {
+                SignalKind::Input => {
+                    // adding function parameter for input signal
+                    func.new_circom_param(&format!("input_signal_{}", idx))
+                },
+                SignalKind::Output => {
+                    // adding return value for output signal
+                    func.add_circom_ret_val(&format!("output_signal_{}", idx))
+                },
+                SignalKind::Intermediate => {
+                    // adding local variable for intermediate signal
+                    func.new_circom_var(&format!("intermediate_signal_{}", idx))
+                }
+            };
 
-        let mut templ_gen = TemplateGenerator {
+            let sig = Signal::new(sig.kind, sig_val_ref);
+            signals.push(sig);
+        }
+
+        let templ_gen = TemplateGenerator {
             name_: name.clone(),
-            signals: Vec::<Signal>::new(),
-            func_gen_: Rc::new(RefCell::new(fgen))
+            signals: signals,
+            func_: Rc::new(RefCell::new(func))
         };
 
-        templ_gen.init(&vec![]);
-
         return templ_gen;
-    }
-
-    /// Initializes generation of new function
-    fn init(&mut self, signals: &Vec<SignalInfo>) {
-        // NOTE: we have to process input signals before other signals because we
-        // can't add local variables after function parameters
-
-        // vector for storing variable references for all signals in their original order
-        let mut sig_vars: Vec<Option<CircomLocalVariableRef>> = vec![None; signals.len()];
-
-        // creating function parameters for input signals
-        for (idx, sig) in signals.iter()
-                .enumerate()
-                .filter(|(_, s)| s.kind == SignalKind::Input) {
-            let par_name = format!("input_signal_{}", idx);
-            let par = self.func_gen().new_param(&par_name);
-            sig_vars[idx] = Some(par);
-        }
-
-        // creating local variables for output signals and adding function return types
-        for (idx, sig) in signals.iter()
-                .enumerate().filter(|(_, s)| s.kind == SignalKind::Output) {
-            // creating local variable
-            let var_name = format!("output_signal_{}", idx);
-            let var = self.func_gen().new_var(&var_name);
-            sig_vars[idx] = Some(var);
-
-            // adding function return type
-            self.func_gen().add_ret_val();
-        }
-    
-        // creating local variables for intermediate signals
-        for (idx, sig) in
-                signals.iter()
-                .enumerate()
-                .filter(|(_, s)| s.kind == SignalKind::Intermediate) {
-            let var_name = format!("intermediate_signal_{}", idx);
-            let var = self.func_gen().new_var(&var_name);
-            sig_vars[idx] = Some(var);
-        }
-
-        // adding signals
-        for (idx, sig) in signals.iter().enumerate() {
-            self.add_signal(sig.kind.clone(), sig_vars[idx].clone().unwrap());
-        }
     }
 
     /// Returns name of template being generated
@@ -179,50 +125,56 @@ impl TemplateGenerator {
 
     /// Returns Rc to function generator for generating template run function
     pub fn func_gen_rc(&mut self) -> Rc<RefCell<CircomFunction>> {
-        return self.func_gen_.clone();
+        return self.func_.clone();
     }
 
     /// Returns reference to function generator for generating template run function
     pub fn func_gen(&self) -> RefMut<CircomFunction> {
-        return self.func_gen_.as_ref().borrow_mut();
+        return self.func_.as_ref().borrow_mut();
     }
 
-    /// Adds new signal
-    pub fn add_signal(&mut self, kind: SignalKind, var: CircomLocalVariableRef) {
-        self.signals.push(Signal::new(kind, var));
-    }
+    // /// Adds new signal
+    // pub fn add_signal(&mut self, kind: SignalKind, var: CircomLocalVariableRef) {
+    //     self.signals.push(Signal::new(kind, var));
+    // }
 
-    /// Returns reference to local variable for signal with specified number
-    pub fn signal(&self, idx: usize) -> CircomLocalVariableRef {
+    /// Returns reference to Circom value for signal with specified number
+    pub fn signal(&self, idx: usize) -> CircomValueRef {
         assert!(idx < self.signals.len());
         return self.signals[idx].var.clone();
     }
 
+    /// Returns reference to Circom value for variable with specified number
+    pub fn circom_var(&self, idx: usize) -> CircomValueRef {
+        return self.func_gen().circom_var(idx);
+    }
+
     /// Builds and returns run function type for this template
-    pub fn function_type(&self) -> WASMFunctionType {
-        let mut ftype = WASMFunctionType::new();
+    pub fn function_type(&self) -> CircomFunctionType {
+        let mut params = Vec::<CircomValueType>::new();
+        let mut ret_types = Vec::<CircomValueType>::new();
 
         for sig in &self.signals {
             match sig.kind {
                 SignalKind::Input => {
-                    ftype.add_param(WASMType::I64);
+                    params.push(CircomValueType::FR);
                 },
                 SignalKind::Output => {
-                    ftype.add_ret_type(WASMType::I64);
+                    ret_types.push(CircomValueType::FR);
                 },
                 _ => {}
             }
         }
 
-        return ftype;
+        return CircomFunctionType::new(params, ret_types);
     }
 
     /// Generates final template code.
     pub fn end(&mut self) {
-        // loading output signals on stack before return
-        self.func_gen().gen_comment("returning output signals");
-        for sig in self.signals.iter().filter(|s| s.kind == SignalKind::Output) {
-            self.func_gen().gen_load_var(&sig.var);
-        }
+        // // loading output signals on stack before return
+        // self.func_gen().gen_comment("returning output signals");
+        // for sig in self.signals.iter().filter(|s| s.kind == SignalKind::Output) {
+        //     self.func_gen().gen_load_var(&sig.var);
+        // }
     }
 }

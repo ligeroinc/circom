@@ -457,18 +457,26 @@ impl GenerateLigetron for StoreBucket {
             }
         };
 
+        producer.gen_comment("store bucket begin");
+
+        // loading reference to destination value
         match &self.dest {
             LocationRule::Indexed { location, .. } => {
                 match &self.dest_address_type {
                     AddressType::Variable => {
-                        panic!("NYI");
+                        // extracting variable number from location instruction
+                        match location.as_ref() {
+                            Instruction::Value(value) => {
+                                producer.load_ref(&producer.circom_var(value.value));
+                            },
+                            _ => { panic!("indexed variable store location is not a constant value"); }
+                        }
                     }
                     AddressType::Signal => {
                         // extracting signal number from location instruction
                         match location.as_ref() {
                             Instruction::Value(value) => {
-                                self.src.as_ref().generate_ligetron(producer);
-                                producer.gen_store_var(&producer.signal(value.value));
+                                producer.load_ref(&producer.signal(value.value));
                             },
                             _ => { panic!("indexed signal store location is not a constant value"); }
                         }
@@ -489,6 +497,15 @@ impl GenerateLigetron for StoreBucket {
                 }
             }
         }
+
+        // generating source value
+        self.src.as_ref().generate_ligetron(producer);
+
+        // generating store
+        producer.gen_circom_store();
+
+        // discarding store result
+        producer.drop();
     }
 }
     

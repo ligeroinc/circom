@@ -255,13 +255,19 @@ impl GenerateLigetron for LoadBucket {
             LocationRule::Indexed { location, .. } => {
                 match &self.address_type {
                     AddressType::Variable => {
-                        panic!("NYI");
+                        // extracting variable number from location instruction
+                        match location.as_ref() {
+                            Instruction::Value(value) => {
+                                producer.gen_circom_load(&producer.circom_var(value.value));
+                            },
+                            _ => { panic!("indexed signal load location is not a constant value"); }
+                        }
                     }
                     AddressType::Signal => {
                         // extracting signal number from location instruction
                         match location.as_ref() {
                             Instruction::Value(value) => {
-                                producer.gen_load_var(&producer.signal(value.value));
+                                producer.gen_circom_load(&producer.signal(value.value));
                             },
                             _ => { panic!("indexed signal load location is not a constant value"); }
                         }

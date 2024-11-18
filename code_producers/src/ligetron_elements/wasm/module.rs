@@ -3,16 +3,16 @@ use super::types::*;
 
 
 /// WASM global variable
-pub struct GlobalVariable {
+pub struct WASMGlobalVariable {
     name: String,
     type_: WASMType,
     init_expr: String,
 }
 
-impl GlobalVariable {
+impl WASMGlobalVariable {
     /// Creates new global variable
-    pub fn new(name: String, type_: WASMType, init_expr: String) -> GlobalVariable {
-        return GlobalVariable {
+    pub fn new(name: String, type_: WASMType, init_expr: String) -> WASMGlobalVariable {
+        return WASMGlobalVariable {
             name: name,
             type_: type_,
             init_expr: init_expr
@@ -28,14 +28,14 @@ impl GlobalVariable {
 
 /// Referenct to global variable
 #[derive(Copy, Clone)]
-pub struct GlobalVariableRef {
+pub struct WASMGlobalVariableRef {
     idx: usize
 }
 
-impl GlobalVariableRef {
+impl WASMGlobalVariableRef {
     /// Creates new reference to global variable
-    pub fn new(idx: usize) -> GlobalVariableRef {
-        return GlobalVariableRef {
+    pub fn new(idx: usize) -> WASMGlobalVariableRef {
+        return WASMGlobalVariableRef {
             idx: idx
         };
     }
@@ -43,18 +43,18 @@ impl GlobalVariableRef {
 
 
 /// WASM Module
-pub struct Module {
+pub struct WASMModule {
     /// Vector of generated module imports
     pub imports: Vec<FunctionImport>,
 
     /// Vector of global variables in module
-    globals: Vec<GlobalVariable>
+    globals: Vec<WASMGlobalVariable>
 }
 
-impl Module {
+impl WASMModule {
     /// Creates new module
-    pub fn new() -> Module {
-        return Module {
+    pub fn new() -> WASMModule {
+        return WASMModule {
             imports: vec![],
             globals: vec![]
         };
@@ -65,25 +65,25 @@ impl Module {
                            name: &str,
                            type_: WASMFunctionType,
                            module_name: &str,
-                           function_name: &str) -> FunctionRef {
+                           function_name: &str) -> WASMFunctionRef {
         let import = FunctionImport::new(name, type_.clone(), module_name, function_name);
         self.imports.push(import);
-        return FunctionRef::new(name, type_);
+        return WASMFunctionRef::new(name, type_);
     }
 
     /// Creates new global variable
     pub fn new_global(&mut self,
                       name: String,
                       tp: WASMType,
-                      init_expr: String) -> GlobalVariableRef {
-        let var = GlobalVariable::new(name, tp, init_expr);
+                      init_expr: String) -> WASMGlobalVariableRef {
+        let var = WASMGlobalVariable::new(name, tp, init_expr);
         let var_idx = self.globals.len();
         self.globals.push(var);
-        return GlobalVariableRef::new(var_idx);
+        return WASMGlobalVariableRef::new(var_idx);
     }
 
     /// Generates WASM for reference to global variable
-    pub fn generate_global_ref(&self, var_ref: GlobalVariableRef) -> String {
+    pub fn generate_global_ref(&self, var_ref: WASMGlobalVariableRef) -> String {
         let var = &self.globals[var_ref.idx];
         return format!("${}", var.name);
     }
@@ -99,7 +99,7 @@ impl Module {
     }
 
     /// Returns global variable reference string and type
-    pub fn get_global_ref_and_type(&self, var_ref: &GlobalVariableRef) -> (String, WASMType) {
+    pub fn get_global_ref_and_type(&self, var_ref: &WASMGlobalVariableRef) -> (String, WASMType) {
         let var = &self.globals[var_ref.idx];
         return (format!("${}", var.name), var.type_);
     }

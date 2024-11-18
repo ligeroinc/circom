@@ -1,4 +1,6 @@
 
+use crate::ligetron_elements::CircomLocalVariableRef;
+
 use super::types::*;
 
 use WASMType::*;
@@ -46,20 +48,11 @@ impl WASMLocalVariable {
 }
 
 
-/// Reference to local WASM variable
+/// Reference to WASM local variable
 #[derive(Clone)]
-pub struct WASMLocalVariableRef {
-    /// Variable index
-    pub idx: usize
-}
-
-impl WASMLocalVariableRef {
-    /// Creates new local variable reference
-    pub fn new(idx: usize) -> WASMLocalVariableRef {
-        return WASMLocalVariableRef {
-            idx: idx
-        };
-    }
+pub enum WASMLocalVariableRef {
+    Parameter(usize),
+    Local(usize)
 }
 
 
@@ -71,6 +64,9 @@ pub struct WASMStackFrame {
     /// Vector of local variables
     locals: Vec<WASMLocalVariable>,
 
+    /// Does this stack frame have unnamed local variables
+    has_unnamed_locals: bool,
+
     /// Stack values
     values: Vec<WASMType>
 }
@@ -81,6 +77,7 @@ impl WASMStackFrame {
         return WASMStackFrame {
             params: vec![],
             locals: vec![],
+            has_unnamed_locals: false,
             values: vec![]
         };
     }
@@ -144,23 +141,21 @@ impl WASMStackFrame {
 
     /// Adds new WASM named function parameter. Returns refence to function parameter.
     pub fn new_param(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
-        if !self.locals.is_empty() {
-            panic!("can't add function parameters after local variables");
+        if self.has_unnamed_locals {
+            panic!("can't add function parameters after unnamed local variables");
         }
 
         let param = WASMLocalVariable::new(Some(name.to_string()), type_);
-        let local_idx = self.params.len();
+        let param_idx = self.params.len();
 
         self.params.push(param);
-        return WASMLocalVariableRef::new(local_idx);
+        return WASMLocalVariableRef::Parameter(param_idx);
     }
 
     /// Returns reference to variable for parameter with specified index.
     pub fn param(&self, idx: usize) -> WASMLocalVariableRef {
         assert!(idx < self.params.len());
-        return WASMLocalVariableRef {
-            idx: idx
-        };
+        return WASMLocalVariableRef::Parameter(idx);
     }
 
     /// Adds new WASM named local variable. Returns reference to variable.
@@ -169,7 +164,7 @@ impl WASMStackFrame {
         let local_idx = self.locals.len() + self.params.len();
 
         self.locals.push(local);
-        return WASMLocalVariableRef::new(local_idx);
+        return WASMLocalVariableRef::Local(local_idx);
     }
 
     /// Adds new unnamed WASM local variable. Returns reference to variable.
@@ -178,15 +173,19 @@ impl WASMStackFrame {
         let local_idx = self.locals.len() + self.params.len();
 
         self.locals.push(local);
-        return WASMLocalVariableRef::new(local_idx);
+        self.has_unnamed_locals = true;
+        return WASMLocalVariableRef::Local(local_idx);
     }
 
     /// Returns reference to WASM local variable corresponding to variable reference
     pub fn local(&self, lref: &WASMLocalVariableRef) -> &WASMLocalVariable {
-        return if lref.idx < self.params.len() {
-            &self.params[lref.idx]
-        } else {
-            &self.locals[lref.idx - self.params.len()]
+        return match lref {
+            WASMLocalVariableRef::Parameter(idx) => {
+                &self.params[*idx]
+            },
+            WASMLocalVariableRef::Local(idx) => {
+                &self.locals[*idx]
+            }
         };
     }
 
@@ -213,12 +212,18 @@ impl WASMStackFrame {
     }
 
     /// Generates reference to WASM local
-    pub fn gen_local_ref(&self, local: &WASMLocalVariableRef) -> String {
-        let var = self.local(local);
+    pub fn gen_local_ref(&self, lref: &WASMLocalVariableRef) -> String {
+        let var = self.local(lref);
 
         match &var.name {
             Some(name) => { return format!("${}", name); },
-            None => { return format!("{}", local.idx); }
+            None => {
+                let idx = match lref {
+                    WASMLocalVariableRef::Parameter(idx) => *idx,
+                    WASMLocalVariableRef::Local(idx) => self.params.len() + idx
+                };
+                return format!("{}", idx);
+            }
         }
     }
 }

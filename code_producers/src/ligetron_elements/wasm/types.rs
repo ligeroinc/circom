@@ -23,6 +23,15 @@ impl WASMType {
             WASMType::PTR => "ptr"
         }
     }
+
+    /// Returns size of type in bytes
+    pub fn size(&self) -> usize {
+        return match self {
+            WASMType::I32 => 4,
+            WASMType::I64 => 8,
+            WASMType::PTR => 4
+        };
+    }
 }
 
 
@@ -112,7 +121,8 @@ impl WASMFunctionType {
 
 
 /// Reference to a function
-pub struct FunctionRef {
+#[derive(Clone)]
+pub struct WASMFunctionRef {
     /// Function name
     name: String,
 
@@ -120,9 +130,9 @@ pub struct FunctionRef {
     pub type_: WASMFunctionType
 }
 
-impl FunctionRef {
-    pub fn new(name: &str, type_: WASMFunctionType) -> FunctionRef {
-        return FunctionRef {
+impl WASMFunctionRef {
+    pub fn new(name: &str, type_: WASMFunctionType) -> WASMFunctionRef {
+        return WASMFunctionRef {
             name: name.to_string(),
             type_: type_
         };
