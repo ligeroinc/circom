@@ -30,9 +30,9 @@ impl CircomValueType {
     }
 
     /// Converts type to string
-    pub fn to_string(&self) -> &'static str {
+    pub fn to_string(&self) -> String {
         return match self {
-            CircomValueType::FR => "FR",
+            CircomValueType::FR => "fr".to_string(),
             CircomValueType::WASM(wasm_type) => wasm_type.to_string()
         }
     }

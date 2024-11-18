@@ -226,4 +226,18 @@ impl WASMStackFrame {
             }
         }
     }
+
+    /// Dumps contents of stack frame to string
+    pub fn dump(&self) -> String {
+        return self.values.iter()
+            .enumerate()
+            .map(|(idx, t)| format!("{}\t{}", idx, t.to_string()))
+            .collect::<Vec::<String>>()
+            .join("\n");
+    }
+
+    /// Returns true if stack is empty
+    pub fn is_empty(&self) -> bool {
+        return self.values.is_empty();
+    }
 }

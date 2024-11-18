@@ -66,10 +66,7 @@ pub struct CircomFunction {
     frame: CircomStackFrame,
 
     /// Circom local variables
-    vars: Vec<CircomLocalVariable>,
-
-    /// Function export name
-    export_name: Option<String>
+    vars: Vec<CircomLocalVariable>
 }
 
 impl CircomFunction {
@@ -98,8 +95,7 @@ impl CircomFunction {
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
             frame: CircomStackFrame::new(size_32_bit, func_rc, mem_frame),
-            vars: Vec::new(),
-            export_name: None,
+            vars: Vec::new()
         };
 
         // allocating circom local variables
@@ -123,7 +119,7 @@ impl CircomFunction {
 
     /// Sets function export name
     pub fn set_export_name(&mut self, name: &str) {
-        self.export_name = Some(name.to_string());
+        self.func.borrow_mut().set_export_name(name);
     }
 
     /// Generates function code as list of instructions. Makes this instance invalid
@@ -214,7 +210,7 @@ impl CircomFunction {
 
     /// Generates setting value of a local
     pub fn gen_local_set(&mut self, var_ref: &WASMLocalVariableRef) {
-        self.func.borrow_mut().gen_local_get(var_ref);
+        self.func.borrow_mut().gen_local_set(var_ref);
     }
 
     /// Generates getting value of a global
@@ -224,7 +220,7 @@ impl CircomFunction {
 
     /// Generates setting value of a global
     pub fn gen_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
-        self.func.borrow_mut().gen_global_get(var_ref);
+        self.func.borrow_mut().gen_global_set(var_ref);
     }
 
     /// Generates drop instruction

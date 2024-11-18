@@ -120,6 +120,12 @@ impl WASMFunction {
             self.frame.borrow_mut().pop(*ret);
         }
 
+        if !self.frame.borrow().is_empty() {
+            println!("WASM stack is not empty at the end of function {}:\n{}\n",
+                     self.name,
+                     self.frame.borrow().dump());
+        }
+
         let mut instructions = Vec::<String>::new();
 
         // generating function header
@@ -200,7 +206,7 @@ impl WASMFunction {
 
     /// Generates setting valuf of a local to current value on top of wasm stack
     pub fn gen_local_set(&mut self, var_ref: &WASMLocalVariableRef) {
-        self.inst_gen.borrow_mut().gen_local_get(var_ref);
+        self.inst_gen.borrow_mut().gen_local_set(var_ref);
     }
 
     /// Generates getting value of a global

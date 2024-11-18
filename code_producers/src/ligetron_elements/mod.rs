@@ -122,6 +122,7 @@ impl LigetronProducer {
         // global memory definition
         instructions.push(format!(""));
         instructions.push(format!("(memory 1 1)"));
+        instructions.push(format!("(export \"memory\" (memory 0))"));
 
         // FR types
         instructions.push(format!(""));

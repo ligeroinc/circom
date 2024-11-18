@@ -16,12 +16,12 @@ impl WASMType {
         }
     }
 
-    pub fn to_string(&self) -> &'static str {
-        match self {
+    pub fn to_string(&self) -> String {
+        return match self {
             WASMType::I32 => "i32",
             WASMType::I64 => "i64",
             WASMType::PTR => "ptr"
-        }
+        }.to_string();
     }
 
     /// Returns size of type in bytes

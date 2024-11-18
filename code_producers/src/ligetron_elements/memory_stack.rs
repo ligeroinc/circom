@@ -262,4 +262,11 @@ impl MemoryStackFrame {
         self.inst_gen.borrow_mut().gen_local_get(&self.frame_base);
         self.inst_gen.borrow_mut().gen_global_set(&self.stack_ptr);
     }
+
+    /// Checks that stack is empty
+    pub fn check_empty(&self) {
+        if !self.values.is_empty() {
+            panic!("Memory stack is not empty");
+        }
+    }
 }
