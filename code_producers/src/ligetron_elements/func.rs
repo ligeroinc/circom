@@ -267,11 +267,11 @@ impl CircomFunction {
         self.frame.push_wasm_local(loc);
     }
 
-    /// Loads reference to memory stack value
-    pub fn load_mem_stack_ref(&mut self,
+    /// Loads pointer to memory stack value on top of stack
+    pub fn load_mem_stack_ptr(&mut self,
                               tp: CircomValueType,
                               val_ref: &MemoryStackValueRef) -> CircomStackValueRef {
-        return self.frame.push_mem_stack_ref(tp, val_ref);
+        return self.frame.push_mem_stack_ptr(tp, val_ref);
     }
 
     /// Loads reference to value on top of stack

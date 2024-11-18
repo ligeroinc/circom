@@ -259,10 +259,21 @@ fn initialize_ligetron_producer(vcp: &VCP, _database: &TemplateDB, _wat_flag: bo
     let prime = UsefulConstants::new(&vcp.prime).get_p().clone();
     return LigetronProducerInfo {
         prime_str: vcp.prime.clone(),
+        fr_memory_size: match vcp.prime.as_str(){
+            "goldilocks" => 412,
+            "bn128" => 1948,
+            "bls12381" => 1948,
+            "grumpkin" => 1948,
+            "pallas" => 1948,
+            "vesta" => 1948,
+            "secq256r1" => 1948,
+            _ => unreachable!()
+        },
         size_32_bit: prime.bits() / 32 + if prime.bits() % 32 != 0 { 1 } else { 0 },        
         main_comp_name: vcp.get_main_instance().unwrap().template_header.clone(),
         number_of_main_inputs: vcp.templates[initial_node].number_of_inputs,
-        number_of_main_outputs: vcp.templates[initial_node].number_of_outputs
+        number_of_main_outputs: vcp.templates[initial_node].number_of_outputs,
+        string_table: vec![]
     };
 }
 
@@ -631,6 +642,7 @@ pub fn build_circuit(vcp: VCP, flag: CompilationFlags, version: &str) -> Circuit
 
     let table_usize_to_string = create_table_usize_to_string(table_string_to_usize);
     circuit.wasm_producer.set_string_table(table_usize_to_string.clone());
+    circuit.ligetron_producer_info.string_table = table_usize_to_string.clone();
     circuit.c_producer.set_string_table(table_usize_to_string);
     for i in 0..field_tracker.next_id() {
         let constant = field_tracker.get_constant(i).unwrap().clone();

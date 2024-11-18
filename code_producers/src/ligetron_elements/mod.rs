@@ -1,6 +1,7 @@
 
 mod fr;
 mod func;
+mod ligetron;
 mod memory_stack;
 mod stack;
 mod template_generator;
@@ -14,8 +15,7 @@ pub use template_generator::SignalInfo;
 
 use fr::*;
 use func::*;
-use memory_stack::*;
-use stack::*;
+use ligetron::*;
 use template_generator::*;
 use types::*;
 use value::*;
@@ -35,18 +35,26 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct LigetronProducerInfo {
     pub prime_str: String,
+    pub fr_memory_size: usize,
     pub size_32_bit: usize,
     pub main_comp_name: String,
     pub number_of_main_inputs: usize,
-    pub number_of_main_outputs: usize
+    pub number_of_main_outputs: usize,
+    pub string_table: Vec<String>
 }
 
 
 pub struct LigetronProducer {
     info: LigetronProducerInfo,
 
+    /// String table, contains offset of strings in memory
+    string_table: HashMap<usize, usize>,
+
     /// FR context
     fr: FRContext,
+
+    /// Ligetron context
+    ligetron: LigetronContext,
 
     /// WASM module being generated
     module_: Rc<RefCell<WASMModule>>,
@@ -91,9 +99,43 @@ impl LigetronProducer {
             raw_copy: fr_raw_copy
         };
 
+
+        let ligetron_print_type = WASMFunctionType::new().with_params(&[I64]);
+        let ligetron_print = module.borrow_mut().import_function("print",
+                                                                 ligetron_print_type,
+                                                                 "env",
+                                                                 "print");
+        let ligetron_print_str_type = WASMFunctionType::new().with_params(&[PTR, I32]);
+        let ligetron_print_str = module.borrow_mut().import_function("print_str",
+                                                                     ligetron_print_str_type,
+                                                                     "env",
+                                                                     "print_str");
+
+        let ligetron_dump_memory_type = WASMFunctionType::new().with_params(&[PTR, I32]);
+        let ligetron_dump_memory = module.borrow_mut().import_function("dump_memory",
+                                                                       ligetron_dump_memory_type,
+                                                                       "env",
+                                                                       "dump_memory");
+
+        let ligetron = LigetronContext {
+            print: ligetron_print,
+            print_str: ligetron_print_str,
+            dump_memory: ligetron_dump_memory
+        };
+
+        // building string table
+        let mut string_table = HashMap::<usize, usize>::new();
+        let mut string_offset = info.fr_memory_size;
+        for (idx, str) in info.string_table.iter().enumerate() {
+            string_table.insert(idx, string_offset);
+            string_offset += str.len() + 1;
+        }
+
         return LigetronProducer {
             info: info.clone(),
+            string_table: string_table,
             fr: fr,
+            ligetron: ligetron,
             module_: module,
             stack_ptr: stack_ptr,
             templates: HashMap::<String, CircomFunctionType>::new(),
@@ -106,6 +148,34 @@ impl LigetronProducer {
     /// Returns reference to module being generated
     pub fn module(&self) -> RefMut<WASMModule> {
         return self.module_.as_ref().borrow_mut();
+    }
+
+    /// Calculates size of string table
+    fn calc_string_table_size(&self) -> usize {
+        let mut sz = 0;
+        for str in &self.info.string_table {
+            sz += str.len() + 1;
+        }
+
+        return sz;
+    }
+
+    /// Calculates start offset of memory stack
+    fn calc_mem_stack_start(&self) -> usize {
+        return self.info.fr_memory_size + self.calc_string_table_size();
+    }
+
+    /// Generates string table
+    fn generate_strings(&self) -> Vec<String> {
+        let mut strings = Vec::<String>::new();
+        let mut offset = self.info.fr_memory_size;
+
+        for str in &self.info.string_table {
+            strings.push(format!("(data (i32.const {}) \"{}\\00\")", offset, str));
+            offset += str.len() + 1;
+        }
+
+        return strings;
     }
 
     /// Generates final code for module. Makes this instance invalid
@@ -135,6 +205,9 @@ impl LigetronProducer {
         instructions.push(format!(";; Begin of FR data"));
         instructions.append(&mut fr_data(&self.info.prime_str));
         instructions.push(format!(";; End of FR data"));
+
+        // String table
+        instructions.append(&mut self.generate_strings());
 
         // module globals
         instructions.push(format!(""));
@@ -285,7 +358,7 @@ impl LigetronProducer {
 
         // initializing memory stack pointer
         self.gen_comment("initializing memory stack pointer");
-        self.gen_const(PTR, 0);
+        self.gen_const(PTR, self.calc_mem_stack_start() as i64);
         self.func().gen_global_set(&self.stack_ptr);
 
         // we use beginning of memory stack to temporarly
@@ -351,6 +424,7 @@ impl LigetronProducer {
             self.func().gen_global_get(&self.stack_ptr);
             self.func().gen_const(I32, (i * 4) as i64);
             self.func().gen_add(PTR);
+            self.gen_load(PTR);
             self.gen_load(I64);
             self.gen_local_set(&loc);
             args.push(loc);
@@ -373,7 +447,7 @@ impl LigetronProducer {
         let fr_args = self.func().alloc_mem_stack(fr_args_types);
 
         for i in 0 .. self.info.number_of_main_inputs {
-            self.func().load_mem_stack_ref(CircomValueType::FR, &fr_args[i]);
+            self.func().load_mem_stack_ptr(CircomValueType::FR, &fr_args[i]);
             self.func().load_wasm_local(&args[i]);
             self.func().gen_call(&self.fr.raw_copy);
             self.func().drop(1);
@@ -504,16 +578,51 @@ impl LigetronProducer {
     pub fn drop(&mut self) {
         self.func().drop(1);
     }
+
+    ////////////////////////////////////////////////////////////
+    // Logging
+
+    /// Generates logging of string message
+    pub fn log_str(&mut self, str_idx: usize) {
+        // looking of string offset in string table
+        let str_offset = self.string_table.get(&str_idx).unwrap();
+
+        // generating call to Ligetron print_str function
+        self.func().gen_comment("logging string");
+        self.func().gen_const(PTR, *str_offset as i64);
+        self.func().gen_const(I32, self.info.string_table[str_idx].len() as i64);
+        self.func().gen_wasm_call(&self.ligetron.print_str);
+    }
+
+    /// Generates logging of value located on stack
+    pub fn log_val(&mut self) {
+        self.func().gen_comment("logging value");
+
+        // loading value located on top of Circom logical stack on WASM stack
+        let val = self.func().get_frame().top(0);
+        self.func().get_frame().gen_wasm_stack_load(val);
+
+        // loading size of FR value on WASM stack
+        self.func().gen_const(I32, (self.info.size_32_bit * 4) as i64);
+
+        // generating call to Ligetron dump_memory function
+        self.func().gen_wasm_call(&self.ligetron.dump_memory);
+
+        // removing value located on top of stack
+        self.func().drop(1);
+    }
 }
 
 impl Default for LigetronProducerInfo {
     fn default() -> Self {
         return LigetronProducerInfo {
             prime_str: "bn128".to_string(),
+            fr_memory_size: 1948,
             size_32_bit: 8,
             main_comp_name: "MAIN_COMP".to_string(),
             number_of_main_inputs: 0,
-            number_of_main_outputs: 0
+            number_of_main_outputs: 0,
+            string_table: vec![]
         };
     }
 }

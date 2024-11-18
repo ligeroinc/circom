@@ -185,8 +185,8 @@ impl CircomStackFrame {
         return self.push(tp, CircomStackValueLocation::WASMSTack);
     }
 
-    /// Pushes memory stack value
-    pub fn push_mem_stack_ref(&mut self,
+    /// Pushes pointer to memory stack value
+    pub fn push_mem_stack_ptr(&mut self,
                               tp: CircomValueType,
                               val_ref: &MemoryStackValueRef) -> CircomStackValueRef {
         return self.push(tp, CircomStackValueLocation::MemoryStackValuePtr(val_ref.clone()));
@@ -194,8 +194,6 @@ impl CircomStackFrame {
 
     /// Allocates new circom values on memory stack
     pub fn alloc_mem_stack(&mut self, types: Vec<CircomValueType>) -> Vec<MemoryStackValueRef> {
-        let mut results = Vec::<MemoryStackValueRef>::new();
-
         let sizes = types.iter().map(|t| t.size(self.size_32_bit)).collect();
         let stack_vals = self.mem_frame.borrow_mut().alloc(sizes);
 

@@ -104,8 +104,21 @@ impl WriteWasm for LogBucket {
 }
 
 impl GenerateLigetron for LogBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        for arg in self.argsprint.clone() {
+            match &arg {
+                LogBucketArg::LogExp(exp) => {
+                    // generating code for calculating log value
+                    exp.as_ref().generate_ligetron(producer);
+
+                    // logging value
+                    producer.log_val();
+                },
+                LogBucketArg::LogStr(str_idx) => {
+                    producer.log_str(*str_idx);
+                }
+            }
+        }
     }
 }
 
