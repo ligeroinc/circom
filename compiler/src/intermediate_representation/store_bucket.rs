@@ -443,6 +443,8 @@ impl WriteWasm for StoreBucket {
 
 impl GenerateLigetron for StoreBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before store bucket");
+
         let (_size_dest, _values_dest) = match &self.context.size {
             SizeOption::Single(value) => (*value, vec![]),
             SizeOption::Multiple(values) => {
@@ -506,6 +508,8 @@ impl GenerateLigetron for StoreBucket {
 
         // discarding store result
         producer.drop();
+
+        producer.debug_dump_state("after store bucket");
     }
 }
     

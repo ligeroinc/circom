@@ -2,6 +2,7 @@
 mod fr;
 mod func;
 mod ligetron;
+mod log;
 mod memory_stack;
 mod stack;
 mod template_generator;
@@ -16,6 +17,7 @@ pub use template_generator::SignalInfo;
 use fr::*;
 use func::*;
 use ligetron::*;
+use log::*;
 use template_generator::*;
 use types::*;
 use value::*;
@@ -40,11 +42,13 @@ pub struct LigetronProducerInfo {
     pub main_comp_name: String,
     pub number_of_main_inputs: usize,
     pub number_of_main_outputs: usize,
-    pub string_table: Vec<String>
+    pub string_table: Vec<String>,
+    pub debug_output: bool
 }
 
 
 pub struct LigetronProducer {
+    /// Code generation parameters
     info: LigetronProducerInfo,
 
     /// String table, contains offset of strings in memory
@@ -78,6 +82,12 @@ pub struct LigetronProducer {
 impl LigetronProducer {
     /// Creates new producer
     pub fn new(info: &LigetronProducerInfo) -> LigetronProducer {
+        if info.debug_output {
+            set_log_enabled(true);
+        }
+
+        debug_log!("LigetronProducer initialization begin");
+
         // creating new module for generated code
         let module = Rc::new(RefCell::new(WASMModule::new()));
 
@@ -723,6 +733,24 @@ impl LigetronProducer {
     ////////////////////////////////////////////////////////////
     // Debugging
 
+    /// Dumps current generator state for debugging
+    pub fn debug_dump_state(&self, stage: &str) {
+        if !log::is_log_enabled() {
+            return;
+        }
+
+        log::debug_log!("");
+        log::debug_log!("============================================================");
+        log::debug_log!("DUMP STATE BEGIN: {}", stage);
+        log::debug_log!("============================================================");
+
+        self.func().debug_dump_state();
+
+        log::debug_log!("DUMP STATE END: {}", stage);
+        log::debug_log!("============================================================");
+        log::debug_log!("");
+    }
+
     /// Dumps current stack contents to string
     pub fn dump_stack(&self) -> String {
         return self.func().get_frame().dump();
@@ -738,7 +766,8 @@ impl Default for LigetronProducerInfo {
             main_comp_name: "MAIN_COMP".to_string(),
             number_of_main_inputs: 0,
             number_of_main_outputs: 0,
-            string_table: vec![]
+            string_table: vec![],
+            debug_output: false
         };
     }
 }

@@ -251,6 +251,8 @@ impl WriteWasm for LoadBucket {
 
 impl GenerateLigetron for LoadBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before load bucket");
+
         match &self.src {
             LocationRule::Indexed { location, .. } => {
                 match &self.address_type {
@@ -281,6 +283,8 @@ impl GenerateLigetron for LoadBucket {
                 panic!("NYI");
             }
         }
+
+        producer.debug_dump_state("after load bucket");
     }
 }
 

@@ -1,4 +1,5 @@
 
+use super::super::log::*;
 use super::module::*;
 use super::stack::*;
 use super::types::*;
@@ -48,6 +49,7 @@ impl InstructionGenerator {
     /// Appends instruction to list of instructions
     /// TODO: make private
     pub fn gen_inst(&mut self, instruction: &str) {
+        debug_log!("~~~INST: {}", instruction);
         self.insts.push(instruction.to_string());
     }
 

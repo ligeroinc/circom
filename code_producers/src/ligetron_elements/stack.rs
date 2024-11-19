@@ -32,20 +32,6 @@ pub enum CircomStackValueLocation {
 }
 
 impl CircomStackValueLocation {
-    /// Dumps location to string
-    pub fn dump(&self) -> String {
-        return match self {
-            CircomStackValueLocation::MemoryPtrWASMLocal(_) => "MEM PTR WASM LOC".to_string(),
-            CircomStackValueLocation::MemoryStackLocalPtr(_) => "MEM LOCAL PTR".to_string(),
-            CircomStackValueLocation::MemoryStackValue(val) => {
-                format!("MEM STACK offset={}", val.offset())
-            },
-            CircomStackValueLocation::MemoryStackValuePtr(_) => "MEM STACK PTR".to_string(),
-            CircomStackValueLocation::WASMLocal(_) => "WASM LOC".to_string(),
-            CircomStackValueLocation::WASMSTack => "WASM STACK".to_string()
-        }
-    }
-
     /// Returns true if location is a pointer
     pub fn is_ptr(&self) -> bool {
         match self {
@@ -82,11 +68,6 @@ impl CircomStackValue {
             deallocated: false
         };
     }
-
-    /// Dumps stack value to string
-    pub fn dump(&self) -> String {
-        return format!("{}\t{}", self.type_.to_string(), self.loc.dump());
-    }
 }
 
 
@@ -102,11 +83,6 @@ impl CircomStackValueRef {
         return CircomStackValueRef {
             value_rc: value_rc
         };
-    }
-
-    /// Dumps stack value to string
-    pub fn dump(&self) -> String {
-        return self.value_rc.borrow().dump();
     }
 }
 
@@ -347,7 +323,30 @@ impl CircomStackFrame {
     pub fn dump(&self) -> String {
         return self.values.iter()
             .enumerate()
-            .map(|v| format!("{}\t{}", v.0, v.1.borrow().dump()))
+            .map(|(idx, val)| {
+                let loc_str = match &val.borrow().loc {
+                    CircomStackValueLocation::MemoryPtrWASMLocal(loc) => {
+                        format!("MEM PTR WASMLOC {}", self.func.borrow().gen_local_ref(loc))
+                    }
+                    CircomStackValueLocation::MemoryStackLocalPtr(loc) => {
+                        format!("MEM LOCAL {}", self.mem_frame.borrow().dump_local(loc))
+                    }
+                    CircomStackValueLocation::MemoryStackValue(val) => {
+                        format!("MEM STACK {}", val.dump(true))
+                    },
+                    CircomStackValueLocation::MemoryStackValuePtr(val) => {
+                        format!("MEM STACK PTR {}", val.dump(true))
+                    }
+                    CircomStackValueLocation::WASMLocal(loc) => {
+                        format!("WASM LOCAL {}", self.func.borrow().gen_local_ref(loc))
+                    }
+                    CircomStackValueLocation::WASMSTack => {
+                        format!("WASM STACK")
+                    }
+                };
+
+                return format!("{:3}\t{}\t{}", idx, val.borrow().type_.to_string(), loc_str);
+            })
             .collect::<Vec<String>>()
             .join("\n");
     }

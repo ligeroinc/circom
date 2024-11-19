@@ -252,7 +252,10 @@ fn initialize_wasm_producer(vcp: &VCP, database: &TemplateDB, wat_flag:bool, ver
 }
 
 // Ligetron producer builder
-fn initialize_ligetron_producer(vcp: &VCP, _database: &TemplateDB, _wat_flag: bool, _version: &str) -> LigetronProducerInfo {
+fn initialize_ligetron_producer(vcp: &VCP,
+                                _database: &TemplateDB,
+                                flags: &CompilationFlags,
+                                _version: &str) -> LigetronProducerInfo {
     use program_structure::utils::constants::UsefulConstants;
 
     let initial_node = vcp.get_main_id();
@@ -273,7 +276,8 @@ fn initialize_ligetron_producer(vcp: &VCP, _database: &TemplateDB, _wat_flag: bo
         main_comp_name: vcp.get_main_instance().unwrap().template_header.clone(),
         number_of_main_inputs: vcp.templates[initial_node].number_of_inputs,
         number_of_main_outputs: vcp.templates[initial_node].number_of_outputs,
-        string_table: vec![]
+        string_table: vec![],
+        debug_output: flags.debug_output
     };
 }
 
@@ -624,7 +628,7 @@ pub fn build_circuit(vcp: VCP, flag: CompilationFlags, version: &str) -> Circuit
     let template_database = TemplateDB::build(&vcp.templates);
     let mut circuit = Circuit::default();
     circuit.wasm_producer = initialize_wasm_producer(&vcp, &template_database, flag.wat_flag, version);
-    circuit.ligetron_producer_info = initialize_ligetron_producer(&vcp, &template_database, flag.wat_flag, version);
+    circuit.ligetron_producer_info = initialize_ligetron_producer(&vcp, &template_database, &flag, version);
     circuit.c_producer = initialize_c_producer(&vcp, &template_database, version);
 
     let field_tracker = FieldTracker::new();

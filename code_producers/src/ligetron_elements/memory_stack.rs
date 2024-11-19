@@ -1,5 +1,6 @@
 
 use super::wasm::*;
+use super::log::*;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -43,6 +44,9 @@ impl MemoryStackLocalRef {
 
 /// Value allocated in memory stack frame
 struct MemoryStackValue {
+    /// Index of value in stack
+    idx: usize,
+
     /// Offset of value from beginning of temporary memory for current frame
     offset: usize,
 
@@ -55,12 +59,23 @@ struct MemoryStackValue {
 
 impl MemoryStackValue {
     /// Creates new memory stack value
-    fn new(offset: usize, size: usize) -> MemoryStackValue {
+    fn new(idx: usize, offset: usize, size: usize) -> MemoryStackValue {
         return MemoryStackValue {
+            idx: idx,
             offset: offset,
             size: size,
             deallocated: false
         };
+    }
+
+    /// Dumps memory value to string
+    fn dump(&self, dump_idx: bool) -> String {
+        let idx_str = if dump_idx {
+            format!("#{:<3}\t", self.idx)
+        } else {
+            "".to_string()
+        };
+        return format!("{}offset=+{}\tsize={}", idx_str, self.offset, self.size);
     }
 }
 
@@ -79,9 +94,24 @@ impl MemoryStackValueRef {
         };
     }
 
+    /// Returns index of value
+    pub fn idx(&self) -> usize {
+        return self.value_rc.borrow().idx;
+    }
+
     /// Returns offset of value
     pub fn offset(&self) -> usize {
         return self.value_rc.borrow().offset;
+    }
+
+    /// Returns value size
+    pub fn size(&self) -> usize {
+        return self.value_rc.borrow().size;
+    }
+
+    /// Dumps memory value to string
+    pub fn dump(&self, dump_idx: bool) -> String {
+        return self.value_rc.borrow().dump(dump_idx);
     }
 }
 
@@ -154,13 +184,19 @@ impl MemoryStackFrame {
         return MemoryStackLocalRef::new(idx);
     }
 
+    /// Dumps local to string
+    pub fn dump_local(&self, loc_ref: &MemoryStackLocalRef) -> String {
+        let loc = &self.locals[loc_ref.idx];
+        return format!("#{:<3} offset=+{} size={}", loc_ref.idx, loc.offset, loc.size);
+    }
+
     /// Allocates values of specified sizes on top of stack. Returns references to allocated values.
     pub fn alloc(&mut self, sizes: Vec<usize>) -> Vec<MemoryStackValueRef> {
         // creating new stack values
         let mut res = Vec::<MemoryStackValueRef>::new();
         let mut total_size: usize = 0;
         for size in sizes {
-            let val = MemoryStackValue::new(self.stack_size, size);
+            let val = MemoryStackValue::new(self.values.len(), self.stack_size, size);
             let val_rc = Rc::new(RefCell::new(val));
             self.values.push(val_rc.clone());
             self.stack_size += size;
@@ -239,7 +275,8 @@ impl MemoryStackFrame {
 
     /// Generates function entry code for allocating stack
     pub fn gen_func_entry(&self) {
-        let mut gen = InstructionGenerator::new(self.module.clone(), self.wasm_stack_frame.clone());
+        let mut gen = InstructionGenerator::new(self.module.clone(),
+                                                self.wasm_stack_frame.clone());
 
         // saving current value of stack pointer into frame base variable
         gen.gen_comment("saving original value of memory stack pointer");
@@ -270,5 +307,16 @@ impl MemoryStackFrame {
         if !self.values.is_empty() {
             panic!("Memory stack is not empty");
         }
+    }
+
+    /// Dumps contents of stack to string
+    pub fn dump(&self) -> String {
+        return self.values.iter()
+            .enumerate()
+            .map(|(idx, val)| {
+                format!("{:3}\t{}", idx, val.borrow().dump(false))
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
     }
 }

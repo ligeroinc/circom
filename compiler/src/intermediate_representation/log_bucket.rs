@@ -105,6 +105,8 @@ impl WriteWasm for LogBucket {
 
 impl GenerateLigetron for LogBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before log bucket");
+
         for arg in self.argsprint.clone() {
             match &arg {
                 LogBucketArg::LogExp(exp) => {
@@ -119,6 +121,8 @@ impl GenerateLigetron for LogBucket {
                 }
             }
         }
+
+        producer.debug_dump_state("after log bucket");
     }
 }
 

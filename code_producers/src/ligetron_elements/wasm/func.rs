@@ -1,4 +1,5 @@
 
+use super::super::log::*;
 use super::inst_gen::*;
 use super::module::*;
 use super::stack::*;
@@ -32,7 +33,14 @@ pub struct WASMFunction {
 
 impl WASMFunction {
     /// Creates new WASM function
-    pub fn new(module: Rc<RefCell<WASMModule>>, name: String) -> WASMFunction {
+    pub fn new(module: Rc<RefCell<WASMModule>>,
+               name: String) -> WASMFunction {
+
+        debug_log!("");
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("WASM FUNCTION BEGIN: {}", name);
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("");
 
         // creating new wasm stack frame for this function
         let frame_rc = Rc::new(RefCell::new(WASMStackFrame::new()));
@@ -108,6 +116,11 @@ impl WASMFunction {
         return (loc.name.clone(), loc.type_);
     }
 
+    /// Returns local name
+    pub fn local_name(&self, loc_ref: &WASMLocalVariableRef) -> Option<String> {
+        return self.frame.borrow_mut().local(loc_ref).name.clone();
+    }
+
     /// Generates reference to WASM local
     pub fn gen_local_ref(&self, lref: &WASMLocalVariableRef) -> String {
         return self.frame.borrow().gen_local_ref(lref)
@@ -120,6 +133,12 @@ impl WASMFunction {
 
     /// Generates function code as list of instructions. Makes this instance invalid
     pub fn generate(&mut self) -> Vec<String> {
+        debug_log!("");
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("WASM FUNCTION END: {}", self.name_);
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("");
+
         // checking that current wasm_stack state corresponds to function return type
         for ret in self.ret_types.iter().rev() {
             self.frame.borrow_mut().pop(*ret);
@@ -252,5 +271,14 @@ impl WASMFunction {
     /// Generates store instruction
     pub fn gen_store(&mut self, tp: WASMType) {
         self.inst_gen.borrow_mut().gen_store(tp);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Debugging
+
+    /// Dump contents of function stack frame to string
+    pub fn dump_stack(&self) -> String {
+        return self.frame.borrow().dump();
     }
 }

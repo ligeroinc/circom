@@ -295,6 +295,7 @@ impl WriteWasm for ComputeBucket {
 
 impl GenerateLigetron for ComputeBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before compute bucket");
         producer.gen_comment("before compute bucket");
 
         // allocating stack value for operation result
@@ -347,6 +348,7 @@ impl GenerateLigetron for ComputeBucket {
         }
 
         producer.gen_comment("after compute bucket");
+        producer.debug_dump_state("after compute bucket");
     }
 }
 

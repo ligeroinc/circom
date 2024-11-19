@@ -1,5 +1,6 @@
 
 use super::fr::*;
+use super::log::*;
 use super::memory_stack::*;
 use super::stack::*;
 use super::types::*;
@@ -78,6 +79,12 @@ impl CircomFunction {
                name: String,
                n_local_vars: usize) -> CircomFunction {
 
+        debug_log!("");
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("CIRCOM FUNCTION BEGIN: {}", name);
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("");
+
         // creating underlying WASM function
         let func = WASMFunction::new(module.clone(), name);
 
@@ -124,6 +131,12 @@ impl CircomFunction {
 
     /// Generates function code as list of instructions. Makes this instance invalid
     pub fn generate(&mut self, gen_func_entry_exit: bool) -> Vec<String> {
+        debug_log!("");
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("CIRCOM FUNCTION END: {}", self.func.borrow().name());
+        debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+        debug_log!("");
+
         // checking that stack is empty
         self.frame.check_empty();
 
@@ -511,5 +524,24 @@ impl CircomFunction {
                 self.frame.push_wasm_stack(ret_type.clone());
             }
         }
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Debugging
+
+    /// Dumps state for debugging
+    pub fn debug_dump_state(&self) {
+        debug_log!("CIRCOM STACK:");
+        debug_log!("{}", self.frame.dump());
+        debug_log!("");
+
+        debug_log!("MEMORY STACK:");
+        debug_log!("{}", self.mem_frame_.borrow().dump());
+        debug_log!("");
+
+        debug_log!("WASM STACK:");
+        debug_log!("{}", self.func.borrow().dump_stack());
+        debug_log!("");
     }
 }
