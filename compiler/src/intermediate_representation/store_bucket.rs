@@ -504,7 +504,7 @@ impl GenerateLigetron for StoreBucket {
         self.src.as_ref().generate_ligetron(producer);
 
         // generating store
-        producer.gen_circom_store();
+        producer.store();
 
         // discarding store result
         producer.drop();

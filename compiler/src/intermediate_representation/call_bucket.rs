@@ -465,8 +465,65 @@ impl WriteWasm for CallBucket {
 }
 
 impl GenerateLigetron for CallBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before call bucket");
+
+        // allocating result for call operation
+        match &self.return_info {
+            ReturnType::Intermediate { .. } => {
+                producer.alloc_fr_result();
+            }
+            ReturnType::Final(data) => {
+                match &data.dest {
+                    LocationRule::Indexed { location, .. } => {
+                        match &data.dest_address_type {
+                            AddressType::Variable => {
+                                // extracting variable number from location instruction
+                                match location.as_ref() {
+                                    Instruction::Value(value) => {
+                                        producer.load_ref(&producer.circom_var(value.value));
+                                    },
+                                    _ => { panic!("indexed variable store location is not a constant value"); }
+                                }
+                            }
+                            AddressType::Signal => {
+                                panic!("AAA");
+                                // extracting signal number from location instruction
+                                match location.as_ref() {
+                                    Instruction::Value(value) => {
+                                        producer.load_ref(&producer.signal(value.value));
+                                    },
+                                    _ => { panic!("indexed signal store location is not a constant value"); }
+                                }
+                            }
+                            AddressType::SubcmpSignal { .. } => {
+                                panic!("NYI");
+                            }
+                        }
+                    }
+                    LocationRule::Mapped { .. }=> {
+                        match data.dest_address_type {
+                            AddressType::SubcmpSignal { .. } => {
+                                panic!("NYI");
+                            }
+                            _ => {
+                                assert!(false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // generating code for calculating arguments
+        for arg in &self.arguments {
+            arg.generate_ligetron(producer);
+        }
+
+        // generating call operation
+        producer.call(&self.symbol, self.arguments.len());
+
+        producer.debug_dump_state("after call bucket");
     }
 }
 

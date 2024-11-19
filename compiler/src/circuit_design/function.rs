@@ -90,8 +90,25 @@ impl WriteWasm for FunctionCodeInfo {
 }
 
 impl GenerateLigetron for FunctionCodeInfo {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        // starting new function
+        producer.new_function(&self.header, self.max_number_of_vars);
+
+        // adding function return value
+        producer.func().add_circom_ret_val("ret_val");
+
+        // adding function parameters
+        for par in &self.params {
+            producer.func().new_circom_param(&par.name);
+        }
+
+        // generating function body
+        for inst in &self.body {
+            inst.generate_ligetron(producer);
+        }
+
+        // finishing function generation
+        producer.end_function(true);
     }
 }
 

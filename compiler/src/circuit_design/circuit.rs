@@ -300,6 +300,11 @@ impl WriteWasm for Circuit {
 
 impl GenerateLigetron for Circuit {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        // generating code for all functions
+        for func in &self.functions {
+            func.generate_ligetron(producer);
+        }
+
         // generating code for all templates
         for templ in &self.templates {
             templ.generate_ligetron(producer);

@@ -95,8 +95,27 @@ impl WriteWasm for ReturnBucket {
 }
 
 impl GenerateLigetron for ReturnBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before return bucket");
+
+        if self.with_size == 1 {
+            // loading pointer to return value on stack
+            let ret_val = producer.ret_val();
+            producer.load_ref(&ret_val);
+
+            // generating code for calculating return value
+            self.value.generate_ligetron(producer);
+
+            // generating store
+            producer.store();
+
+            // discarding store result
+            producer.drop();
+        } else {
+            panic!("NYI");
+        }
+
+        producer.debug_dump_state("after return bucket");
     }
 }
 

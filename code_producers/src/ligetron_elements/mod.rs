@@ -141,6 +141,12 @@ impl LigetronProducer {
         };
     }
 
+    ////////////////////////////////////////////////////////////
+    // Public generator interface
+
+
+    ////////////////////////////////////////////////////////////
+
     /// Returns reference to module being generated
     pub fn module(&self) -> RefMut<WASMModule> {
         return self.module_.as_ref().borrow_mut();
@@ -547,27 +553,40 @@ impl LigetronProducer {
 
     /// Returns reference to Circom value for variable with specified number
     pub fn circom_var(&self, var_num: usize) -> CircomValueRef {
-        return self.func().circom_var(var_num);
+        // if we are generating template then we have ot add number of template
+        // input signals to variable number because they are passed as function
+        // parameters in ligetron target, but Circom compiler does not count them
+        // as parameters
+        let mut real_var_num = var_num;
+        if self.template_gen_.is_some() {
+            real_var_num += self.func().params_count();
+        }
+        return self.func().circom_var(real_var_num);
     }
 
 
     ////////////////////////////////////////////////////////////
     // Fr code generation
 
+    /// Loads reference to value on top of stack
+    pub fn load_ref(&mut self, val: &CircomValueRef) {
+        return self.func().load_ref(val);
+    }
+
     /// Generates loading Circom value to stack from another location
-    pub fn gen_circom_load(&mut self, val_ref: &CircomValueRef) {
+    pub fn load(&mut self, val_ref: &CircomValueRef) {
         self.func().gen_circom_load(val_ref);
+    }
+
+    /// Returns reference to return value
+    pub fn ret_val(&mut self) -> CircomValueRef {
+        return self.func().circom_ret_val(0);
     }
 
     /// Generates saving Circom value located on top of stack to location specified
     /// in the second stack value
-    pub fn gen_circom_store(&mut self) {
+    pub fn store(&mut self) {
         self.func().gen_circom_store();
-    }
-
-    /// Loads reference to value on top of stack
-    pub fn load_ref(&mut self, val: &CircomValueRef) {
-        return self.func().load_ref(val);
     }
 
     /// Drops value from stack
@@ -693,6 +712,25 @@ impl LigetronProducer {
     /// Generates Fr bnot operation
     pub fn fr_bnot(&mut self) {
         self.func().fr_bnot();
+    }
+
+    /// Generates call operation
+    pub fn call(&mut self, symbol: &String, args_count: usize) {
+        // constructing function type
+        let arg_types = std::iter::repeat([CircomValueType::FR])
+            .flatten().take(args_count).collect::<Vec<_>>();
+        let ftype = CircomFunctionType::new(arg_types, vec![CircomValueType::FR]);
+
+        // constructing function reference
+        let func = CircomFunctionRef::new(symbol.clone(), ftype);
+
+        // generating call
+        self.func().gen_call(&func);
+    }
+
+    /// Generates return operation
+    pub fn gen_return(&mut self) {
+
     }
 
 
