@@ -335,7 +335,9 @@ impl CircomStackFrame {
     /// Checks that stack is empty
     pub fn check_empty(&self) {
         if !self.values.is_empty() {
-            println!("Stack is not empty:\n{}\n", self.dump());
+            println!("Stack is not empty at the end of function {}:\n{}\n",
+                     self.func.borrow().name(),
+                     self.dump());
         }
 
         self.mem_frame.borrow().check_empty();

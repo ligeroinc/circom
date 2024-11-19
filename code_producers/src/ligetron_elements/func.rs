@@ -283,6 +283,127 @@ impl CircomFunction {
     ////////////////////////////////////////////////////////////
     // Fr code generation
 
+    /// Allocates Fr value on stack for result of operation
+    pub fn alloc_fr_result(&mut self) {
+        self.frame.alloc_mem_stack(vec![CircomValueType::FR]);
+    }
+
+    /// Generates Fr mul operation
+    pub fn fr_mul(&mut self) {
+        self.gen_call(&self.fr.mul.clone());
+    }
+
+    /// Generates Fr div operation
+    pub fn fr_div(&mut self) {
+        self.gen_call(&self.fr.div.clone());
+    }
+
+    /// Generates Fr add operation
+    pub fn fr_add(&mut self) {
+        self.gen_call(&self.fr.add.clone());
+    }
+
+    /// Generates Fr sub operation
+    pub fn fr_sub(&mut self) {
+        self.gen_call(&self.fr.sub.clone());
+    }
+
+    /// Generates Fr pow operation
+    pub fn fr_pow(&mut self) {
+        self.gen_call(&self.fr.pow.clone());
+    }
+
+    /// Generates Fr idiv operation
+    pub fn fr_idiv(&mut self) {
+        self.gen_call(&self.fr.idiv.clone());
+    }
+
+    /// Generates Fr mod operation
+    pub fn fr_mod(&mut self) {
+        self.gen_call(&self.fr.mod_.clone());
+    }
+
+    /// Generates Fr shl operation
+    pub fn fr_shl(&mut self) {
+        self.gen_call(&self.fr.shl.clone());
+    }
+
+    /// Generates Fr shr operation
+    pub fn fr_shr(&mut self) {
+        self.gen_call(&self.fr.shr.clone());
+    }
+
+    /// Generates Fr leq operation
+    pub fn fr_leq(&mut self) {
+        self.gen_call(&self.fr.leq.clone());
+    }
+
+    /// Generates Fr geq operation
+    pub fn fr_geq(&mut self) {
+        self.gen_call(&self.fr.geq.clone());
+    }
+
+    /// Generates Fr lt operation
+    pub fn fr_lt(&mut self) {
+        self.gen_call(&self.fr.lt.clone());
+    }
+
+    /// Generates Fr gt operation
+    pub fn fr_gt(&mut self) {
+        self.gen_call(&self.fr.gt.clone());
+    }
+
+    /// Generates Fr eq operation
+    pub fn fr_eq(&mut self) {
+        self.gen_call(&self.fr.eq.clone());
+    }
+
+    /// Generates Fr neq operation
+    pub fn fr_neq(&mut self) {
+        self.gen_call(&self.fr.neq.clone());
+    }
+
+    /// Generates Fr lor operation
+    pub fn fr_lor(&mut self) {
+        self.gen_call(&self.fr.lor.clone());
+    }
+
+    /// Generates Fr land operation
+    pub fn fr_land(&mut self) {
+        self.gen_call(&self.fr.land.clone());
+    }
+
+    /// Generates Fr bor operation
+    pub fn fr_bor(&mut self) {
+        self.gen_call(&self.fr.bor.clone());
+    }
+
+    /// Generates Fr band operation
+    pub fn fr_band(&mut self) {
+        self.gen_call(&self.fr.band.clone());
+    }
+
+    /// Generates Fr bxor operation
+    pub fn fr_bxor(&mut self) {
+        self.gen_call(&self.fr.bxor.clone());
+    }
+
+    /// Generates Fr neg operation
+    pub fn fr_neg(&mut self) {
+        self.gen_call(&self.fr.neg.clone());
+    }
+
+    /// Generates Fr lnot operation
+    pub fn fr_lnot(&mut self) {
+        self.gen_call(&self.fr.lnot.clone());
+    }
+
+    /// Generates Fr bnot operation
+    pub fn fr_bnot(&mut self) {
+        self.gen_call(&self.fr.bnot.clone());
+    }
+
+
     /// Creates new Circom local variable with specified name
     pub fn new_circom_var(&mut self, name: &str) -> CircomValueRef {
         // allocating space for variable in memory stack frame

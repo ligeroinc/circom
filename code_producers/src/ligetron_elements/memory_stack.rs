@@ -198,6 +198,8 @@ impl MemoryStackFrame {
             }
         }
 
+        self.stack_size -= total_size;
+
         // decreasing global stack pointer
         self.inst_gen.borrow_mut().gen_global_get(&self.stack_ptr);
         self.inst_gen.borrow_mut().gen_const(WASMType::I32, -1 * (total_size as i64));

@@ -294,8 +294,59 @@ impl WriteWasm for ComputeBucket {
 }
 
 impl GenerateLigetron for ComputeBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.gen_comment("before compute bucket");
+
+        // allocating stack value for operation result
+        producer.alloc_fr_result();
+
+        // calculation operation arguments
+        for inst in &self.stack {
+            inst.generate_ligetron(producer);
+        }
+
+        // generating operation
+        match self.op {
+            OperatorType::Mul =>        { producer.fr_mul();  }
+            OperatorType::Div =>        { producer.fr_div();  }
+            OperatorType::Add =>        { producer.fr_add();  }
+            OperatorType::Sub =>        { producer.fr_sub();  }
+            OperatorType::Pow =>        { producer.fr_pow();  }
+            OperatorType::IntDiv =>     { producer.fr_idiv(); }
+            OperatorType::Mod =>        { producer.fr_mod();  }
+            OperatorType::ShiftL =>     { producer.fr_shl();  }
+            OperatorType::ShiftR =>     { producer.fr_shr();  }
+            OperatorType::LesserEq =>   { producer.fr_leq();  }
+            OperatorType::GreaterEq =>  { producer.fr_geq();  }
+            OperatorType::Lesser =>     { producer.fr_lt();   }
+            OperatorType::Greater =>    { producer.fr_gt();   }
+            OperatorType::Eq(usize) => {
+                if usize != 1 {
+                    panic!("NYI");
+                }
+                producer.fr_eq();
+            }
+            OperatorType::NotEq =>      { producer.fr_neq();  }
+            OperatorType::BoolOr =>     { producer.fr_lor();  }
+            OperatorType::BoolAnd =>    { producer.fr_land(); }
+            OperatorType::BitOr =>      { producer.fr_bor();  }
+            OperatorType::BitAnd =>     { producer.fr_band(); }
+            OperatorType::BitXor =>     { producer.fr_bxor(); }
+            OperatorType::PrefixSub =>  { producer.fr_neg();  }
+            OperatorType::BoolNot =>    { producer.fr_lnot(); }
+            OperatorType::Complement => { producer.fr_bnot(); }
+            OperatorType::ToAddress => {
+                panic!("NYI");
+            }
+            OperatorType::MulAddress => {
+                panic!("NYI");
+            }
+            OperatorType::AddAddress => {
+                panic!("NYI");
+            }
+        }
+
+        producer.gen_comment("after compute bucket");
     }
 }
 

@@ -86,20 +86,6 @@ impl LigetronProducer {
                                                        WASMType::PTR,
                                                        format!("(i32.const 0)")); 
 
-        let fr_copy_type = CircomFunctionType::new(vec![CircomValueType::FR],
-                                                   vec![CircomValueType::FR]);
-        let fr_copy = CircomFunctionRef::new("Fr_copy".to_string(), fr_copy_type);
-
-        let fr_raw_copy_type = CircomFunctionType::new(vec![CircomValueType::WASM(I64)],
-                                                       vec![CircomValueType::FR]);
-        let fr_raw_copy = CircomFunctionRef::new("Fr_rawCopyS2L".to_string(), fr_raw_copy_type);
-
-        let fr = FRContext {
-            copy: fr_copy,
-            raw_copy: fr_raw_copy
-        };
-
-
         let ligetron_print_type = WASMFunctionType::new().with_params(&[I64]);
         let ligetron_print = module.borrow_mut().import_function("print",
                                                                  ligetron_print_type,
@@ -134,7 +120,7 @@ impl LigetronProducer {
         return LigetronProducer {
             info: info.clone(),
             string_table: string_table,
-            fr: fr,
+            fr: FRContext::new(),
             ligetron: ligetron,
             module_: module,
             stack_ptr: stack_ptr,
@@ -434,7 +420,7 @@ impl LigetronProducer {
         self.gen_comment("allocating Fr values for main component results");
         let res_types: Vec<_> = std::iter::repeat([CircomValueType::FR])
             .flatten()
-            .take(self.info.number_of_main_inputs)
+            .take(self.info.number_of_main_outputs)
             .collect();
         let _ = self.func().alloc_mem_stack(res_types);
 
@@ -579,6 +565,127 @@ impl LigetronProducer {
         self.func().drop(1);
     }
 
+    /// Allocates Fr value on stack for result of operation
+    pub fn alloc_fr_result(&mut self) {
+        self.func().alloc_fr_result();
+    }
+
+    /// Generates Fr mul operation
+    pub fn fr_mul(&mut self) {
+        self.func().fr_mul();
+    }
+
+    /// Generates Fr div operation
+    pub fn fr_div(&mut self) {
+        self.func().fr_div();
+    }
+
+    /// Generates Fr add operation
+    pub fn fr_add(&mut self) {
+        self.func().fr_add();
+    }
+
+    /// Generates Fr sub operation
+    pub fn fr_sub(&mut self) {
+        self.func().fr_sub();
+    }
+
+    /// Generates Fr pow operation
+    pub fn fr_pow(&mut self) {
+        self.func().fr_pow();
+    }
+
+    /// Generates Fr idiv operation
+    pub fn fr_idiv(&mut self) {
+        self.func().fr_idiv();
+    }
+
+    /// Generates Fr mod operation
+    pub fn fr_mod(&mut self) {
+        self.func().fr_mod();
+    }
+
+    /// Generates Fr shl operation
+    pub fn fr_shl(&mut self) {
+        self.func().fr_shl();
+    }
+
+    /// Generates Fr shr operation
+    pub fn fr_shr(&mut self) {
+        self.func().fr_shr();
+    }
+
+    /// Generates Fr leq operation
+    pub fn fr_leq(&mut self) {
+        self.func().fr_leq();
+    }
+
+    /// Generates Fr geq operation
+    pub fn fr_geq(&mut self) {
+        self.func().fr_geq();
+    }
+
+    /// Generates Fr lt operation
+    pub fn fr_lt(&mut self) {
+        self.func().fr_lt();
+    }
+
+    /// Generates Fr gt operation
+    pub fn fr_gt(&mut self) {
+        self.func().fr_gt();
+    }
+
+    /// Generates Fr eq operation
+    pub fn fr_eq(&mut self) {
+        self.func().fr_eq();
+    }
+
+    /// Generates Fr neq operation
+    pub fn fr_neq(&mut self) {
+        self.func().fr_neq();
+    }
+
+    /// Generates Fr lor operation
+    pub fn fr_lor(&mut self) {
+        self.func().fr_lor();
+    }
+
+    /// Generates Fr land operation
+    pub fn fr_land(&mut self) {
+        self.func().fr_land();
+    }
+
+    /// Generates Fr bor operation
+    pub fn fr_bor(&mut self) {
+        self.func().fr_bor();
+    }
+
+    /// Generates Fr band operation
+    pub fn fr_band(&mut self) {
+        self.func().fr_band();
+    }
+
+    /// Generates Fr bxor operation
+    pub fn fr_bxor(&mut self) {
+        self.func().fr_bxor();
+    }
+
+    /// Generates Fr neg operation
+    pub fn fr_neg(&mut self) {
+        self.func().fr_neg();
+    }
+
+    /// Generates Fr lnot operation
+    pub fn fr_lnot(&mut self) {
+        self.func().fr_lnot();
+    }
+
+    /// Generates Fr bnot operation
+    pub fn fr_bnot(&mut self) {
+        self.func().fr_bnot();
+    }
+
+
     ////////////////////////////////////////////////////////////
     // Logging
 
@@ -610,6 +717,15 @@ impl LigetronProducer {
 
         // removing value located on top of stack
         self.func().drop(1);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Debugging
+
+    /// Dumps current stack contents to string
+    pub fn dump_stack(&self) -> String {
+        return self.func().get_frame().dump();
     }
 }
 

@@ -21,7 +21,7 @@ pub struct WASMFunction {
     inst_gen: Rc<RefCell<InstructionGenerator>>,
 
     /// Function name
-    name: String,
+    name_: String,
 
     /// Vector of function return types
     ret_types: Vec<WASMType>,
@@ -45,10 +45,15 @@ impl WASMFunction {
             module_: module,
             frame: frame_rc,
             inst_gen: inst_gen,
-            name: name,
+            name_: name,
             ret_types: vec![],
             export_name: None
         };
+    }
+
+    /// Returns function name
+    pub fn name(&self) -> &String {
+        return &self.name_;
     }
 
     /// Returns shared reference to instruction generator for this function
@@ -122,14 +127,14 @@ impl WASMFunction {
 
         if !self.frame.borrow().is_empty() {
             println!("WASM stack is not empty at the end of function {}:\n{}\n",
-                     self.name,
+                     self.name_,
                      self.frame.borrow().dump());
         }
 
         let mut instructions = Vec::<String>::new();
 
         // generating function header
-        instructions.push(format!("(func ${}", &self.name));
+        instructions.push(format!("(func ${}", &self.name_));
 
         // generating export name
         match &self.export_name {
