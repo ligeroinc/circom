@@ -141,8 +141,69 @@ impl LigetronProducer {
         };
     }
 
+
     ////////////////////////////////////////////////////////////
-    // Public generator interface
+    // Local variables, parameters and return values
+
+    /// Loads reference to local variable or parameter on stack
+    pub fn load_local_var_ref(&mut self, var_idx: usize) {
+        if self.template_gen_.is_some() {
+            // if we are generating template then variable index is real variable index
+            // because Circom compiler does not count input signals as function parameters
+            let var = self.func().local_var(var_idx);
+            self.func().load_local_var_ref(&var);
+        } else {
+            if var_idx < self.func().params_count() {
+                // loading function parameter
+                let par = self.func().param(var_idx);
+                self.func().load_param_ref(&par);
+            } else {
+                // loading local variable
+                let real_var_idx = var_idx - self.func().params_count();
+                let var = self.func().local_var(real_var_idx);
+                self.func().load_local_var_ref(&var);
+            }
+        }
+    }
+
+    /// Loads reference to return value on stack
+    pub fn load_ret_val_ref(&mut self) {
+        let ret_val = self.func().ret_val(0);
+        self.func().load_ret_val_ref(&ret_val);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Functions
+
+    /// Returns reference to current function
+    pub fn func(&self) -> RefMut<CircomFunction> {
+        return self.func_
+            .as_ref()
+            .expect("no current function")
+            .borrow_mut();
+    }
+
+    /// Starts generation of new function
+    pub fn new_function(&mut self, name: &str, n_local_vars: usize) {
+        assert!(self.func_.is_none());
+        let fgen = CircomFunction::new(self.info.size_32_bit,
+                                       self.fr.clone(),
+                                       self.module_.clone(),
+                                       self.stack_ptr,
+                                       name.to_string(),
+                                       n_local_vars);
+        self.func_ = Some(Rc::new(RefCell::new(fgen)));
+    }
+
+    /// Finishes function generation
+    pub fn end_function(&mut self, gen_entry_exit: bool) {
+        assert!(self.func_.is_some());
+        self.instructions.push(format!(""));
+        let mut insts = self.func().generate(gen_entry_exit);
+        self.instructions.append(&mut insts);
+        self.func_ = None
+    }
 
 
     ////////////////////////////////////////////////////////////
@@ -233,120 +294,11 @@ impl LigetronProducer {
 
 
     ////////////////////////////////////////////////////////////
-    // Functions
-
-    /// Returns reference to current function
-    pub fn func(&self) -> RefMut<CircomFunction> {
-        return self.func_
-            .as_ref()
-            .expect("no current function")
-            .borrow_mut();
-    }
-
-    /// Starts generation of new function
-    pub fn new_function(&mut self, name: &str, n_local_vars: usize) {
-        assert!(self.func_.is_none());
-        let fgen = CircomFunction::new(self.info.size_32_bit,
-                                       self.fr.clone(),
-                                       self.module_.clone(),
-                                       self.stack_ptr,
-                                       name.to_string(),
-                                       n_local_vars);
-        self.func_ = Some(Rc::new(RefCell::new(fgen)));
-    }
-
-    /// Finishes function generation
-    pub fn end_function(&mut self, gen_entry_exit: bool) {
-        assert!(self.func_.is_some());
-        self.instructions.push(format!(""));
-        let mut insts = self.func().generate(gen_entry_exit);
-        self.instructions.append(&mut insts);
-        self.func_ = None
-    }
-
-    /// Adds return type for current function
-    pub fn add_wasm_ret_type(&mut self, type_: WASMType) {
-        self.func().add_wasm_ret_type(type_);
-    }
-
-    /// Adds new WASM named function parameter for current function.
-    /// Returns refence to function parameter.
-    pub fn new_wasm_param(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
-        return self.func().new_wasm_param(name, type_);
-    }
-
-    /// Adds new WASM named local variable. Returns reference to variable.
-    pub fn new_wasm_named_local(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
-        return self.func().new_wasm_named_local(name, type_);
-    }
-
-    /// Adds new WASM unnamed local variable. Returns reference to variable.
-    pub fn new_wasm_local(&mut self, type_: WASMType) -> WASMLocalVariableRef {
-        return self.func().new_wasm_local(type_);
-    }
-
-
-    ////////////////////////////////////////////////////////////
-    // Instructions
-
-    /// Generates empty code line
-    pub fn gen_empty(&mut self) {
-        self.func().gen_empty();
-    }
+    // Utility instructions
 
     /// Generates comment with emtpy line before it
     pub fn gen_comment(&mut self, str: &str) {
         self.func().gen_comment(str);
-    }
-
-    /// Generates call instruction
-    fn gen_wasm_call(&mut self, func: &WASMFunctionRef) {
-        self.func().gen_wasm_call(func);
-    }
-
-    /// Generates getting value of a local
-    pub fn gen_local_get(&mut self, local: &WASMLocalVariableRef) {
-        self.func().gen_local_get(local);
-    }
-
-    /// Generates setting value of a local to specified string expression
-    pub fn gen_local_set_expr(&mut self, local: &WASMLocalVariableRef, expr: &str) {
-        self.func().gen_local_set_expr(local, expr);
-    }
-
-    /// Generates setting valuf of a local
-    pub fn gen_local_set(&mut self, local: &WASMLocalVariableRef) {
-        self.func().gen_local_set(local);
-    }
-
-    /// Generates getting value of a globa
-    pub fn gen_global_get(&mut self, glob: &WASMGlobalVariableRef) {
-        self.func().gen_global_get(glob);
-    }
-
-    /// Generates setting valuf of a global
-    pub fn gen_galobal_set(&mut self, glob: &WASMGlobalVariableRef) {
-        self.func().gen_global_set(glob);
-    }
-
-    /// Generates drop instruction
-    pub fn gen_drop(&mut self) {
-        self.func().gen_drop();
-    }
-
-    /// Generates constant instruction
-    pub fn gen_const(&mut self, type_: WASMType, value: i64) {
-        self.func().gen_const(type_, value);
-    }
-
-    /// Generates mul instruction
-    pub fn gen_mul(&mut self, type_: WASMType) {
-        self.func().gen_mul(type_);
-    }
-
-    /// Generates load instruction
-    pub fn gen_load(&mut self, type_: WASMType) {
-        self.func().gen_load(type_);
     }
 
 
@@ -359,8 +311,8 @@ impl LigetronProducer {
         self.func().set_export_name(&func_name);
 
         // initializing memory stack pointer
-        self.gen_comment("initializing memory stack pointer");
-        self.gen_const(PTR, self.calc_mem_stack_start() as i64);
+        self.func().gen_comment("initializing memory stack pointer");
+        self.func().gen_const(PTR, self.calc_mem_stack_start() as i64);
         self.func().gen_global_set(&self.stack_ptr);
 
         // we use beginning of memory stack to temporarly
@@ -372,7 +324,7 @@ impl LigetronProducer {
             WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
             "wasi_snapshot_preview1",
             "args_sizes_get");
-        self.gen_comment("getting size of program arguments");
+        self.func().gen_comment("getting size of program arguments");
         self.func().gen_global_get(&self.stack_ptr);    // address to store number of args
         self.func().gen_global_get(&self.stack_ptr);
         self.func().gen_const(I32, 4);
@@ -381,23 +333,23 @@ impl LigetronProducer {
 
         // removing call return value with error code from stack
         // TODO: check error code
-        self.gen_drop();
+        self.func().gen_drop();
 
         // saving number of arguments into local
-        self.gen_comment("saving number of arguments into argc local");
-        let argc = self.new_wasm_named_local("argc", I32);
+        self.func().gen_comment("saving number of arguments into argc local");
+        let argc = self.func().new_wasm_named_local("argc", I32);
         self.func().gen_global_get(&self.stack_ptr);
-        self.gen_load(I32);
-        self.gen_local_set(&argc);
+        self.func().gen_load(I32);
+        self.func().gen_local_set(&argc);
 
         // saving size of buffer for arguments into local
-        self.gen_comment("saving size of buffer for arguments into argv_size local");
-        let argv_size = self.new_wasm_named_local("argv_size", I32);
+        self.func().gen_comment("saving size of buffer for arguments into argv_size local");
+        let argv_size = self.func().new_wasm_named_local("argv_size", I32);
         self.func().gen_global_get(&self.stack_ptr);
         self.func().gen_const(I32, 4);
         self.func().gen_add(PTR);
-        self.gen_load(I32);
-        self.gen_local_set(&argv_size);
+        self.func().gen_load(I32);
+        self.func().gen_local_set(&argv_size);
 
         // getting arguments
         let args_get = self.module().import_function(
@@ -405,7 +357,7 @@ impl LigetronProducer {
             WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
             "wasi_snapshot_preview1",
             "args_get");
-        self.gen_comment("getting program arguments");
+        self.func().gen_comment("getting program arguments");
         self.func().gen_global_get(&self.stack_ptr);    // address to store pointers to arguments
         self.func().gen_global_get(&self.stack_ptr);
         self.func().gen_local_get(&argc);
@@ -416,24 +368,24 @@ impl LigetronProducer {
 
         // removing call result with error code
         // TODO: check error code
-        self.gen_drop();
+        self.func().gen_drop();
 
         // saving arguments to local variables
         let mut args = Vec::<WASMLocalVariableRef>::new();
-        self.gen_comment("saving arguments to local variables");
+        self.func().gen_comment("saving arguments to local variables");
         for i in 1 .. self.info.number_of_main_inputs + 1 {
-            let loc = self.new_wasm_named_local(&format!("arg_{}", i), I64);
+            let loc = self.func().new_wasm_named_local(&format!("arg_{}", i), I64);
             self.func().gen_global_get(&self.stack_ptr);
             self.func().gen_const(I32, (i * 4) as i64);
             self.func().gen_add(PTR);
-            self.gen_load(PTR);
-            self.gen_load(I64);
-            self.gen_local_set(&loc);
+            self.func().gen_load(PTR);
+            self.func().gen_load(I64);
+            self.func().gen_local_set(&loc);
             args.push(loc);
         }
 
         // allocating FR values for results
-        self.gen_comment("allocating Fr values for main component results");
+        self.func().gen_comment("allocating Fr values for main component results");
         let res_types: Vec<_> = std::iter::repeat([CircomValueType::FR])
             .flatten()
             .take(self.info.number_of_main_outputs)
@@ -441,7 +393,7 @@ impl LigetronProducer {
         let _ = self.func().alloc_mem_stack(res_types);
 
         // creating FR values from program arguments with Fr_rawCopyS2L function
-        self.gen_comment("creating Fr values with porgram arguments");
+        self.func().gen_comment("creating Fr values with porgram arguments");
         let fr_args_types: Vec<_> = std::iter::repeat([CircomValueType::FR])
             .flatten()
             .take(self.info.number_of_main_inputs)
@@ -456,12 +408,12 @@ impl LigetronProducer {
         }
 
         // executing main component
-        self.gen_comment("executing main component");
+        self.func().gen_comment("executing main component");
         self.func().gen_call(&self.main_comp_run_function());
 
         // discarding results of main component
         // TODO: should we handle it?
-        self.gen_comment(&format!("discarding main component results: {}", self.info.number_of_main_outputs));
+        self.func().gen_comment(&format!("discarding main component results: {}", self.info.number_of_main_outputs));
         self.func().drop(self.info.number_of_main_outputs);
 
         // calling exit function at the end of entry function
@@ -471,9 +423,9 @@ impl LigetronProducer {
             WASMFunctionType::new().with_params(&[I32]),
             "wasi_snapshot_preview1",
             "proc_exit");
-        self.gen_comment("calling exit function");
-        self.gen_const(I32, 0);
-        self.gen_wasm_call(&proc_exit);
+        self.func().gen_comment("calling exit function");
+        self.func().gen_const(I32, 0);
+        self.func().gen_wasm_call(&proc_exit);
 
         self.end_function(false);
     }
@@ -546,22 +498,10 @@ impl LigetronProducer {
         self.template_gen_ = None;
     }
 
-    /// Returns reference to Circom value for signal with specified number
-    pub fn signal(&self, sig_num: usize) -> CircomValueRef {
-        return self.template_gen().signal(sig_num);
-    }
-
-    /// Returns reference to Circom value for variable with specified number
-    pub fn circom_var(&self, var_num: usize) -> CircomValueRef {
-        // if we are generating template then we have ot add number of template
-        // input signals to variable number because they are passed as function
-        // parameters in ligetron target, but Circom compiler does not count them
-        // as parameters
-        let mut real_var_num = var_num;
-        if self.template_gen_.is_some() {
-            real_var_num += self.func().params_count();
-        }
-        return self.func().circom_var(real_var_num);
+    /// Loads reference to signal with specified index on stack
+    pub fn load_signal_ref(&mut self, sig_idx: usize) {
+        let sig = self.template_gen().signal(sig_idx);
+        self.template_gen_mut().load_signal_ref(sig);
     }
 
 

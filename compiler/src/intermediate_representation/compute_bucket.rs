@@ -301,7 +301,7 @@ impl GenerateLigetron for ComputeBucket {
         // allocating stack value for operation result
         producer.alloc_fr_result();
 
-        // calculation operation arguments
+        // generating code for calculating operation arguments
         for inst in &self.stack {
             inst.generate_ligetron(producer);
         }

@@ -1,6 +1,4 @@
 
-use crate::ligetron_elements::CircomLocalVariableRef;
-
 use super::types::*;
 
 use WASMType::*;

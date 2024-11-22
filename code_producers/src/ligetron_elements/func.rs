@@ -13,63 +13,6 @@ use std::cell::{RefCell, RefMut};
 use WASMType::*;
 
 
-
-/// Circom parameter
-struct CircomParameter {
-    /// Parameter name
-    name: String,
-
-    /// Reference to WASM local containing pointer to parameter memory
-    mem_ref: WASMLocalVariableRef
-}
-
-impl CircomParameter {
-    /// Creates new parameter
-    pub fn new(name: String, mem_ref: WASMLocalVariableRef) -> CircomParameter {
-        return CircomParameter {
-            name: name,
-            mem_ref: mem_ref
-        };
-    }
-}
-
-
-/// Circom local variable
-struct CircomLocalVariable {
-    /// Name of variable
-    name: String,
-
-    /// Reference to local variable in memory stack frame
-    mem_ref: MemoryStackLocalRef
-}
-
-impl CircomLocalVariable {
-    /// Creates new local variable
-    fn new(name: &str, mem_ref: MemoryStackLocalRef) -> CircomLocalVariable {
-        return CircomLocalVariable {
-            name: name.to_string(),
-            mem_ref: mem_ref
-        };
-    }
-}
-
-
-/// Reference to Circlom local variable
-#[derive(Clone)]
-pub struct CircomLocalVariableRef {
-    idx: usize
-}
-
-impl CircomLocalVariableRef {
-    /// Creates new local variable reference
-    fn new(idx: usize) -> CircomLocalVariableRef {
-        return CircomLocalVariableRef {
-            idx: idx
-        };
-    }
-}
-
-
 /// Represents current Circom function being generated
 pub struct CircomFunction {
     /// Size of Circom variables, in 32bit
@@ -86,12 +29,6 @@ pub struct CircomFunction {
 
     /// Circom stack frame
     frame: CircomStackFrame,
-
-    /// Circom parameters
-    params: Vec<CircomParameter>,
-
-    /// Circom local variables
-    vars: Vec<CircomLocalVariable>
 }
 
 impl CircomFunction {
@@ -126,14 +63,12 @@ impl CircomFunction {
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
             frame: CircomStackFrame::new(size_32_bit, func_rc, mem_frame),
-            params: Vec::new(),
-            vars: Vec::new()
         };
 
         // allocating circom local variables
         for i in 0 .. n_local_vars {
             let var_name = format!("local_var_{}", i);
-            let _ = cfunc.new_circom_var(&var_name);
+            let _ = cfunc.frame.new_local_var(var_name, CircomValueType::FR);
         }
 
         return cfunc;
@@ -176,55 +111,84 @@ impl CircomFunction {
 
 
     ////////////////////////////////////////////////////////////
-    /// Function parameters and return values
+    /// Local variables
 
-    /// Adds WASM return type for function
-    pub fn add_wasm_ret_type(&mut self, tp: WASMType) {
-        self.func.borrow_mut().add_ret_type(tp);
+    /// Creates new local variable
+    pub fn new_local_var(&mut self, name: String, tp: CircomValueType) -> CircomLocalVariableRef {
+        return self.frame.new_local_var(name, tp);
     }
 
-    /// Adds new WASM named function parameter. Returns refence to function parameter.
-    pub fn new_wasm_param(&mut self, name: &str, tp: WASMType) -> WASMLocalVariableRef {
-        return self.func.borrow_mut().new_param(name, tp);
+    /// Returns reference to local variable with specified index
+    pub fn local_var(&self, idx: usize) -> CircomLocalVariableRef {
+        return self.frame.local_var(idx);
     }
 
-    /// Returns reference to variable for parameter with specified index
-    pub fn wasm_param(&self, idx: usize) -> WASMLocalVariableRef {
-        return self.func.borrow().param(idx);
+    /// Loads reference to local variable on stack
+    pub fn load_local_var_ref(&mut self, var_ref: &CircomLocalVariableRef) {
+        self.frame.load_local_var_ref(var_ref);
     }
+
+
+    ////////////////////////////////////////////////////////////
+    /// Function parameters
+
+    /// Creates new function parameter
+    pub fn new_param(&mut self, name: String, tp: CircomValueType) -> CircomParameterRef {
+        return self.frame.new_param(name, tp);
+    }
+
+    /// Returns reference to parameter with specified index
+    pub fn param(&self, idx: usize) -> CircomParameterRef {
+        return self.frame.param(idx);
+    }
+
+    /// Loads reference to parameter on stack
+    pub fn load_param_ref(&mut self, par_ref: &CircomParameterRef) {
+        self.frame.load_param_ref(par_ref);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    /// Function return values
+
+    /// Creates new return value
+    pub fn new_ret_val(&mut self, tp: CircomValueType) -> CircomReturnValueRef {
+        return self.frame.new_ret_val(tp);
+    }
+
+    /// Returns reference to return value at specified index
+    pub fn ret_val(&self, idx: usize) -> CircomReturnValueRef {
+        return self.frame.ret_val(idx);
+    }
+
+    /// Loads reference to return value on stack
+    pub fn load_ret_val_ref(&mut self, ret_val: &CircomReturnValueRef) {
+        self.frame.load_ret_val_ref(ret_val);
+    }
+    
+
+    /// Creates new function parameter
 
     /// Adds new WASM named local variable. Returns reference to variable.
     pub fn new_wasm_named_local(&mut self, name: &str, tp: WASMType) -> WASMLocalVariableRef {
         return self.func.borrow_mut().new_named_local(name, tp);
     }
 
-    /// Adds new unnamed WASM local variable. Returns reference to variable.
-    pub fn new_wasm_local(&mut self, tp: WASMType) -> WASMLocalVariableRef {
-        return self.func.borrow_mut().new_wasm_local(tp);
-    }
-
     /// Adds Circom return value to function
     pub fn add_circom_ret_val(&mut self, name: &str) -> CircomValueRef {
-        // creating WASM parameter for pointer to return value
-        let wasm_par = self.new_wasm_param(name, PTR);
-        return CircomValueRef::MemoryRefWASMLocal(wasm_par);
+        let ret_val = self.frame.new_ret_val(CircomValueType::FR);
+        return CircomValueRef::MemoryRefWASMLocal(self.frame.ret_val_wasm_loc(&ret_val).clone());
     }
 
     /// Creates new Circom function parameter with specified name
     pub fn new_circom_param(&mut self, name: &str) -> CircomValueRef {
-        // creating WASM parameter for pointer to Circom variable
-        let wasm_par = self.new_wasm_param(name, PTR);
-
-        // creating Circom variable
-        let par = CircomParameter::new(name.to_string(), wasm_par.clone());
-        self.params.push(par);
-
-        return CircomValueRef::MemoryRefWASMLocal(wasm_par);
+        let par = self.frame.new_param(name.to_string(), CircomValueType::FR);
+        return CircomValueRef::MemoryRefWASMLocal(self.frame.param_wasm_loc(&par).clone());
     }
 
     /// Returns count of function parameters
     pub fn params_count(&self) -> usize {
-        return self.params.len();
+        return self.frame.params_count();
     }
 
     /// Returns return value at specified index
@@ -461,23 +425,19 @@ impl CircomFunction {
 
     /// Creates new Circom local variable with specified name
     pub fn new_circom_var(&mut self, name: &str) -> CircomValueRef {
-        // allocating space for variable in memory stack frame
-        let mem_loc_ref = self.mem_frame().new_local((self.size_32_bit + 2) * 4);
-
-        // creating Circom variable
-        let var = CircomLocalVariable::new(name, mem_loc_ref.clone());
-        self.vars.push(var);
-
-        return CircomValueRef::MemoryStackLocal(mem_loc_ref);
+        let var = self.frame.new_local_var(name.to_string(), CircomValueType::FR);
+        return CircomValueRef::MemoryStackLocal(self.frame.local_var_mem_loc(&var).clone());
     }
 
     /// Returns reference Circom local variable with specified index
     pub fn circom_var(&self, idx: usize) -> CircomValueRef {
-        if idx < self.params.len() {
-            return CircomValueRef::MemoryRefWASMLocal(self.params[idx].mem_ref.clone());
+        let par_cnt = self.frame.params_count();
+        if idx < par_cnt {
+            let par = self.frame.param(idx);
+            return CircomValueRef::MemoryRefWASMLocal(self.frame.param_wasm_loc(&par).clone());
         } else {
-            let var = &self.vars[idx - self.params.len()];
-            return CircomValueRef::MemoryStackLocal(var.mem_ref.clone());    
+            let var = self.frame.local_var(idx - par_cnt);
+            return CircomValueRef::MemoryStackLocal(self.frame.local_var_mem_loc(&var).clone());
         }
     }
 

@@ -1,5 +1,8 @@
 
 use super::func::*;
+use super::stack::CircomLocalVariableRef;
+use super::stack::CircomParameterRef;
+use super::stack::CircomReturnValueRef;
 use super::types::*;
 use super::value::*;
 use super::wasm::*;
@@ -40,17 +43,34 @@ impl SignalInfo {
 
 
 /// Represents a signal in a template
-struct Signal {
-    kind: SignalKind,
-    var: CircomValueRef
+enum Signal {
+    Input(CircomParameterRef),
+    Output(CircomReturnValueRef),
+    Intermediate(CircomLocalVariableRef),
 }
 
 impl Signal {
-    /// Creates new signal
-    pub fn new(kind: SignalKind, var: CircomValueRef) -> Signal {
-        return Signal {
-            kind: kind,
-            var: var
+    /// Returns signal kind
+    fn kind(&self) -> SignalKind {
+        match self {
+            Signal::Input(_) => SignalKind::Input,
+            Signal::Output(_) => SignalKind::Output,
+            Signal::Intermediate(_) => SignalKind::Intermediate
+        }
+    }
+}
+
+
+/// Reference to signal
+pub struct SignalRef {
+    idx: usize,
+}
+
+impl SignalRef {
+    /// Creates reference to signal
+    fn new(idx: usize) -> SignalRef {
+        return SignalRef {
+            idx: idx
         };
     }
 }
@@ -90,23 +110,26 @@ impl TemplateGenerator {
         // processing template signals
         let mut signals = Vec::<Signal>::new();
         for (idx, sig) in sig_info.iter().enumerate() {
-            let sig_val_ref = match sig.kind {
+            let signal = match sig.kind {
                 SignalKind::Input => {
                     // adding function parameter for input signal
-                    func.new_circom_param(&format!("input_signal_{}", idx))
+                    let par = func.new_param(format!("input_signal_{}", idx), CircomValueType::FR);
+                    Signal::Input(par)
                 },
                 SignalKind::Output => {
                     // adding return value for output signal
-                    func.add_circom_ret_val(&format!("output_signal_{}", idx))
+                    let ret = func.new_ret_val(CircomValueType::FR);
+                    Signal::Output(ret)
                 },
                 SignalKind::Intermediate => {
                     // adding local variable for intermediate signal
-                    func.new_circom_var(&format!("intermediate_signal_{}", idx))
+                    let var_name = format!("intermediate_signal_{}", idx);
+                    let var = func.new_local_var(var_name, CircomValueType::FR);
+                    Signal::Intermediate(var)
                 }
             };
 
-            let sig = Signal::new(sig.kind, sig_val_ref);
-            signals.push(sig);
+            signals.push(signal);
         }
 
         let templ_gen = TemplateGenerator {
@@ -133,21 +156,32 @@ impl TemplateGenerator {
         return self.func_.as_ref().borrow_mut();
     }
 
+    /// Returns reference to signal with specified index
+    pub fn signal(&self, idx: usize) -> SignalRef {
+        assert!(idx < self.signals.len());
+        return SignalRef::new(idx);
+    }
+
+    /// Loads reference to signal on stack
+    pub fn load_signal_ref(&mut self, sig: SignalRef) {
+        let sig = &self.signals[sig.idx];
+        match sig {
+            Signal::Input(par) => {
+                self.func_gen().load_param_ref(par);
+            }
+            Signal::Output(ret_val) => {
+                self.func_gen().load_ret_val_ref(ret_val);
+            }
+            Signal::Intermediate(loc_var) => {
+                self.func_gen().load_local_var_ref(loc_var);
+            }
+        }
+    }
+
     // /// Adds new signal
     // pub fn add_signal(&mut self, kind: SignalKind, var: CircomLocalVariableRef) {
     //     self.signals.push(Signal::new(kind, var));
     // }
-
-    /// Returns reference to Circom value for signal with specified number
-    pub fn signal(&self, idx: usize) -> CircomValueRef {
-        assert!(idx < self.signals.len());
-        return self.signals[idx].var.clone();
-    }
-
-    /// Returns reference to Circom value for variable with specified number
-    pub fn circom_var(&self, idx: usize) -> CircomValueRef {
-        return self.func_gen().circom_var(idx);
-    }
 
     /// Builds and returns run function type for this template
     pub fn function_type(&self) -> CircomFunctionType {
@@ -155,11 +189,11 @@ impl TemplateGenerator {
         let mut ret_types = Vec::<CircomValueType>::new();
 
         for sig in &self.signals {
-            match sig.kind {
-                SignalKind::Input => {
+            match sig {
+                Signal::Input(_) => {
                     params.push(CircomValueType::FR);
                 },
-                SignalKind::Output => {
+                Signal::Output(_) => {
                     ret_types.push(CircomValueType::FR);
                 },
                 _ => {}

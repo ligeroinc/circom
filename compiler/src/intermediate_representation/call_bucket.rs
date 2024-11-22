@@ -481,17 +481,16 @@ impl GenerateLigetron for CallBucket {
                                 // extracting variable number from location instruction
                                 match location.as_ref() {
                                     Instruction::Value(value) => {
-                                        producer.load_ref(&producer.circom_var(value.value));
+                                        producer.load_local_var_ref(value.value);
                                     },
                                     _ => { panic!("indexed variable store location is not a constant value"); }
                                 }
                             }
                             AddressType::Signal => {
-                                panic!("AAA");
                                 // extracting signal number from location instruction
                                 match location.as_ref() {
                                     Instruction::Value(value) => {
-                                        producer.load_ref(&producer.signal(value.value));
+                                        producer.load_signal_ref(value.value);
                                     },
                                     _ => { panic!("indexed signal store location is not a constant value"); }
                                 }
