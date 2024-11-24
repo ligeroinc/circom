@@ -74,8 +74,21 @@ impl WriteWasm for ValueBucket {
 }
 
 impl GenerateLigetron for ValueBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before value bucket");
+        producer.gen_comment("before value bucket");
+
+        match self.parse_as {
+            ValueType::U32 => {
+                producer.load_const_u32(self.value);
+            }
+            ValueType::BigInt => {
+                producer.load_const(self.value);
+            }
+        }
+
+        producer.debug_dump_state("after value bucket");
+        producer.gen_comment("after value bucket");
     }
 }
 

@@ -109,6 +109,11 @@ impl CircomFunction {
         return self.func.borrow_mut().generate();
     }
 
+    /// Loads memory value at const address on sack
+    pub fn load_mem_const(&mut self, tp: CircomValueType, addr: usize) {
+        self.frame.push_mem_const(tp, addr);
+    }
+
 
     ////////////////////////////////////////////////////////////
     /// Local variables

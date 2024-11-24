@@ -124,6 +124,9 @@ impl CircomReturnValueRef {
 /// Location of value stored on Circom stack frame
 #[derive(Clone)]
 pub enum CircomStackValueLocation {
+    /// Memory pointer with fixed value
+    MemoryPtrConst(usize),
+
     /// Memory pointer referenced by local WASM variable
     MemoryPtrWASMLocal(WASMLocalVariableRef),
 
@@ -147,6 +150,7 @@ impl CircomStackValueLocation {
     /// Returns true if location is a pointer
     pub fn is_ptr(&self) -> bool {
         match self {
+            CircomStackValueLocation::MemoryPtrConst(_) => true,
             CircomStackValueLocation::MemoryPtrWASMLocal(_) => true,
             CircomStackValueLocation::MemoryStackLocalPtr(_) => true,
             CircomStackValueLocation::MemoryStackValue(_) => false,
@@ -239,6 +243,7 @@ impl CircomStackFrame {
             values: vec![]
         };
     }
+
 
     ////////////////////////////////////////////////////////////
     /// Local variables
@@ -397,6 +402,13 @@ impl CircomStackFrame {
         return CircomStackValueRef::new(value_rc);
     }
 
+    /// Pushes value stored in global memory at constant address
+    pub fn push_mem_const(&mut self,
+                          tp: CircomValueType,
+                          addr: usize) -> CircomStackValueRef {
+        return self.push(tp, CircomStackValueLocation::MemoryPtrConst(addr));
+    }
+
     /// Pushes value stored in global memory referenced by pointer in WASM local variable
     pub fn push_mem(&mut self,
                     tp: CircomValueType,
@@ -451,6 +463,9 @@ impl CircomStackFrame {
             {
                 let val = self.values.last().unwrap().borrow();
                 match &val.loc {
+                    CircomStackValueLocation::MemoryPtrConst(_) => {
+                        // doing nothing
+                    }
                     CircomStackValueLocation::MemoryPtrWASMLocal(_) => {
                         // doing nothing
                     },
@@ -493,6 +508,9 @@ impl CircomStackFrame {
     pub fn gen_wasm_stack_load(&mut self, val: CircomStackValueRef) {
         let (_, loc) = self.value(&val);
         match loc {
+            CircomStackValueLocation::MemoryPtrConst(addr) => {
+                self.func.borrow_mut().gen_const(WASMType::PTR, addr as i64);
+            },
             CircomStackValueLocation::MemoryPtrWASMLocal(wasm_loc) => {
                 self.func.borrow_mut().gen_local_get(&wasm_loc);
             },
@@ -523,6 +541,9 @@ impl CircomStackFrame {
             {
                 let val = self.values.last().unwrap().borrow();
                 match &val.loc {
+                    CircomStackValueLocation::MemoryPtrConst(_) => {
+                        // doing nothing
+                    }
                     CircomStackValueLocation::MemoryPtrWASMLocal(_) => {
                         // doing nothing
                     },
@@ -587,6 +608,9 @@ impl CircomStackFrame {
             .enumerate()
             .map(|(idx, val)| {
                 let loc_str = match &val.borrow().loc {
+                    CircomStackValueLocation::MemoryPtrConst(addr) => {
+                        format!("MEM PTR CONST {}", addr)
+                    }
                     CircomStackValueLocation::MemoryPtrWASMLocal(loc) => {
                         format!("MEM PTR WASMLOC {}", self.func.borrow().gen_local_ref(loc))
                     }

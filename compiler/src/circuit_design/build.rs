@@ -261,6 +261,7 @@ fn initialize_ligetron_producer(vcp: &VCP,
     let initial_node = vcp.get_main_id();
     let prime = UsefulConstants::new(&vcp.prime).get_p().clone();
     return LigetronProducerInfo {
+        prime: UsefulConstants::new(&vcp.prime).get_p().clone(),
         prime_str: vcp.prime.clone(),
         fr_memory_size: match vcp.prime.as_str(){
             "goldilocks" => 412,
@@ -277,6 +278,7 @@ fn initialize_ligetron_producer(vcp: &VCP,
         number_of_main_inputs: vcp.templates[initial_node].number_of_inputs,
         number_of_main_outputs: vcp.templates[initial_node].number_of_outputs,
         string_table: vec![],
+        field_tracking: vec![],
         debug_output: flags.debug_output
     };
 }
@@ -651,6 +653,7 @@ pub fn build_circuit(vcp: VCP, flag: CompilationFlags, version: &str) -> Circuit
     for i in 0..field_tracker.next_id() {
         let constant = field_tracker.get_constant(i).unwrap().clone();
         circuit.wasm_producer.field_tracking.push(constant.clone());
+        circuit.ligetron_producer_info.field_tracking.push(constant.clone());
         circuit.c_producer.field_tracking.push(constant);
     }
     for fun in &mut circuit.functions {

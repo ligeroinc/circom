@@ -29,6 +29,7 @@ use super::wasm_elements::wasm_code_generator::fr_code;
 
 use WASMType::*;
 
+use num_bigint_dig::BigInt;
 use std::rc::Rc;
 use std::cell::{RefCell, Ref, RefMut};
 use std::collections::HashMap;
@@ -36,6 +37,7 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct LigetronProducerInfo {
+    pub prime: BigInt,
     pub prime_str: String,
     pub fr_memory_size: usize,
     pub size_32_bit: usize,
@@ -43,6 +45,7 @@ pub struct LigetronProducerInfo {
     pub number_of_main_inputs: usize,
     pub number_of_main_outputs: usize,
     pub string_table: Vec<String>,
+    pub field_tracking: Vec<String>,
     pub debug_output: bool
 }
 
@@ -141,6 +144,21 @@ impl LigetronProducer {
         };
     }
 
+    ////////////////////////////////////////////////////////////
+    // Constants
+
+    /// Loads constant with specified index to stack
+    pub fn load_const(&mut self, const_idx: usize) {
+        let addr = self.calc_constants_start() +
+                   CircomValueType::FR.size(self.info.size_32_bit) * const_idx;
+        self.func().load_mem_const(CircomValueType::FR, addr);
+    }
+
+    /// Loads constnst with specified value to stack
+    pub fn load_const_u32(&mut self, _val: usize) {
+        panic!("NYI")
+    }
+
 
     ////////////////////////////////////////////////////////////
     // Local variables, parameters and return values
@@ -223,9 +241,22 @@ impl LigetronProducer {
         return sz;
     }
 
+    /// Calculates sart offset of constants block
+    fn calc_constants_start(&self) -> usize {
+        return self.info.fr_memory_size +
+               self.calc_string_table_size();
+    }
+
+    /// Calculates size of constants table
+    fn calc_constants_table_size(&self) -> usize {
+        return self.info.field_tracking.len() * (self.info.size_32_bit + 2) * 4;
+    }
+
     /// Calculates start offset of memory stack
     fn calc_mem_stack_start(&self) -> usize {
-        return self.info.fr_memory_size + self.calc_string_table_size();
+        return self.info.fr_memory_size +
+               self.calc_string_table_size() +
+               self.calc_constants_table_size();
     }
 
     /// Generates string table
@@ -239,6 +270,81 @@ impl LigetronProducer {
         }
 
         return strings;
+    }
+
+    /// Generates constants data string (copied from wasm_code_generator.rs)
+    fn generate_data_constants(&self, constant_list: &Vec<String>) -> String {
+        use crate::wasm_elements::wasm_code_generator::wasm_hexa;
+
+        let mut constant_list_data = "".to_string();
+        //    For short/long form
+        //    let szero = wasm_hexa(producer.get_size_32_bit()*4,&BigInt::from(0));
+        for s in constant_list {
+            /*
+                    // Only long form
+                    let n = s.parse::<BigInt>().unwrap();
+                    constant_list_data.push_str("\\00\\00\\00\\00\\00\\00\\00\\80");
+                    constant_list_data.push_str(&wasm_hexa(producer.get_size_32_bit()*4,&n));
+            */
+            //      For sort/long or short/montgomery
+            let mut n = s.parse::<BigInt>().unwrap();
+            let min_int = BigInt::from(-2147483648);
+            let max_int = BigInt::from(2147483647);
+            let p = self.info.prime.clone();
+            let b = ((p.bits() + 63) / 64) * 64;
+            let mut r = BigInt::from(1);
+            r = r << b;
+            n = n % BigInt::clone(&p);
+            n = n + BigInt::clone(&p);
+            n = n % BigInt::clone(&p);
+            let hp = BigInt::clone(&p) / 2;
+            let mut nn;
+            if BigInt::clone(&n) > hp {
+                nn = BigInt::clone(&n) - BigInt::clone(&p);
+            } else {
+                nn = BigInt::clone(&n);
+            }
+            /*
+                    // short/long
+                    if min_int <= nn && nn <= max_int {
+                    // It is short
+                        if nn < BigInt::from(0) {
+                            nn = BigInt::parse_bytes(b"100000000", 16).unwrap() + nn;
+                        }
+                        constant_list_data.push_str(&wasm_hexa(4,&nn));
+                        constant_list_data.push_str("\\00\\00\\00\\00");  // 0000
+                        constant_list_data.push_str(&szero);
+                    } else {
+                    //It is long
+                        constant_list_data.push_str("\\00\\00\\00\\00\\00\\00\\00\\80"); // 1000
+                        constant_list_data.push_str(&wasm_hexa(producer.get_size_32_bit()*4,&n));
+                    }
+            */
+            //short/montgomery
+            if min_int <= nn && nn <= max_int {
+                // It is short. We have it in short & Montgomery
+                if nn < BigInt::from(0) {
+                    nn = BigInt::parse_bytes(b"100000000", 16).unwrap() + nn;
+                }
+                constant_list_data.push_str(&wasm_hexa(4, &nn));
+                constant_list_data.push_str("\\00\\00\\00\\40"); // 0100
+            } else {
+                //It is long. Only Montgomery
+                constant_list_data.push_str("\\00\\00\\00\\00\\00\\00\\00\\C0"); // 1100
+            }
+            // Montgomery
+            // n*R mod P
+            n = (n * BigInt::clone(&r)) % BigInt::clone(&p);
+            constant_list_data.push_str(&wasm_hexa(self.info.size_32_bit * 4, &n));
+        }
+        constant_list_data
+    }
+
+    /// Generates constatnts data
+    fn generate_constants(&self) -> String {
+        let start = self.info.fr_memory_size + self.calc_string_table_size();
+        let data = self.generate_data_constants(&self.info.field_tracking);
+        return format!("(data (i32.const {}) \"{}\")", start, data);
     }
 
     /// Generates final code for module. Makes this instance invalid
@@ -271,6 +377,9 @@ impl LigetronProducer {
 
         // String table
         instructions.append(&mut self.generate_strings());
+
+        // constants table
+        instructions.push(self.generate_constants());
 
         // module globals
         instructions.push(format!(""));
@@ -737,7 +846,10 @@ impl LigetronProducer {
 
 impl Default for LigetronProducerInfo {
     fn default() -> Self {
+        let prime = BigInt::parse_bytes("21888242871839275222246405745257275088548364400416034343698204186575808495617".as_bytes(), 10)
+            .expect("can't parse prime");
         return LigetronProducerInfo {
+            prime: prime,
             prime_str: "bn128".to_string(),
             fr_memory_size: 1948,
             size_32_bit: 8,
@@ -745,6 +857,7 @@ impl Default for LigetronProducerInfo {
             number_of_main_inputs: 0,
             number_of_main_outputs: 0,
             string_table: vec![],
+            field_tracking: vec![],
             debug_output: false
         };
     }
