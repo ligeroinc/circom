@@ -116,10 +116,17 @@ impl LigetronProducer {
                                                                        "env",
                                                                        "dump_memory");
 
+        let ligetron_assert_one_type = WASMFunctionType::new().with_params(&[I32]);
+        let ligetron_assert_one = module.borrow_mut().import_function("assert_one",
+                                                                      ligetron_assert_one_type,
+                                                                      "env",
+                                                                      "assert_one");
+
         let ligetron = LigetronContext {
             print: ligetron_print,
             print_str: ligetron_print_str,
-            dump_memory: ligetron_dump_memory
+            dump_memory: ligetron_dump_memory,
+            assert_one: ligetron_assert_one
         };
 
         // building string table
@@ -154,9 +161,12 @@ impl LigetronProducer {
         self.func().load_mem_const(CircomValueType::FR, addr);
     }
 
-    /// Loads constnst with specified value to stack
-    pub fn load_const_u32(&mut self, _val: usize) {
-        panic!("NYI")
+    /// Loads u32 constant with specified value to stack
+    pub fn load_const_u32(&mut self, val: usize) {
+        self.func().load_const(WASMType::I64, val as i64);
+        self.debug_dump_state("AAAAAA");
+        self.func().gen_call(&self.fr.raw_copy);
+        println!("BBBB");
     }
 
 
@@ -225,6 +235,12 @@ impl LigetronProducer {
 
 
     ////////////////////////////////////////////////////////////
+
+    /// Generates assert operation
+    pub fn assert(&self) {
+        self.func().gen_call(&self.fr.is_true);
+        self.func().gen_call(&CircomFunctionRef::from_wasm(&self.ligetron.assert_one));
+    }
 
     /// Returns reference to module being generated
     pub fn module(&self) -> RefMut<WASMModule> {

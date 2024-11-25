@@ -114,6 +114,11 @@ impl CircomFunction {
         self.frame.push_mem_const(tp, addr);
     }
 
+    /// Loads WASM constant value on stack
+    pub fn load_const(&mut self, tp: WASMType, val: i64) {
+        self.frame.load_const(tp, val);
+    }
+
 
     ////////////////////////////////////////////////////////////
     /// Local variables

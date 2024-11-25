@@ -124,7 +124,7 @@ impl WASMFunctionType {
 #[derive(Clone)]
 pub struct WASMFunctionRef {
     /// Function name
-    name: String,
+    name_: String,
 
     /// Function type
     pub type_: WASMFunctionType
@@ -133,14 +133,24 @@ pub struct WASMFunctionRef {
 impl WASMFunctionRef {
     pub fn new(name: &str, type_: WASMFunctionType) -> WASMFunctionRef {
         return WASMFunctionRef {
-            name: name.to_string(),
+            name_: name.to_string(),
             type_: type_
         };
     }
 
+    /// Returns function name
+    pub fn name(&self) -> &String {
+        return &self.name_;
+    }
+
+    /// Return function type
+    pub fn tp(&self) -> &WASMFunctionType {
+        return &self.type_;
+    }
+
     /// Generates WASM code for function identifier
     pub fn generate(&self) -> String {
-        return format!("${}", &self.name)
+        return format!("${}", &self.name_)
     }
 }
 

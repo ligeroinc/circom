@@ -124,6 +124,9 @@ impl CircomReturnValueRef {
 /// Location of value stored on Circom stack frame
 #[derive(Clone)]
 pub enum CircomStackValueLocation {
+    /// WASM constant value
+    WASMConst(i64),
+
     /// Memory pointer with fixed value
     MemoryPtrConst(usize),
 
@@ -143,13 +146,14 @@ pub enum CircomStackValueLocation {
     WASMLocal(WASMLocalVariableRef),
 
     /// Value stored in WASM stack
-    WASMSTack
+    WASMSTack,
 }
 
 impl CircomStackValueLocation {
     /// Returns true if location is a pointer
     pub fn is_ptr(&self) -> bool {
         match self {
+            CircomStackValueLocation::WASMConst(_) => false,
             CircomStackValueLocation::MemoryPtrConst(_) => true,
             CircomStackValueLocation::MemoryPtrWASMLocal(_) => true,
             CircomStackValueLocation::MemoryStackLocalPtr(_) => true,
@@ -394,6 +398,11 @@ impl CircomStackFrame {
         return (val.type_.clone(), val.loc.clone());
     }
 
+    /// Loads WASM const value on stack
+    pub fn load_const(&mut self, tp: WASMType, val: i64) -> CircomStackValueRef {
+        return self.push(CircomValueType::WASM(tp), CircomStackValueLocation::WASMConst(val));
+    }
+
     /// Pushes value to stack
     fn push(&mut self, tp: CircomValueType, loc: CircomStackValueLocation) -> CircomStackValueRef {
         let value = CircomStackValue::new(tp, loc);
@@ -463,9 +472,12 @@ impl CircomStackFrame {
             {
                 let val = self.values.last().unwrap().borrow();
                 match &val.loc {
+                    CircomStackValueLocation::WASMConst(_) => {
+                        // doing nothing
+                    },
                     CircomStackValueLocation::MemoryPtrConst(_) => {
                         // doing nothing
-                    }
+                    },
                     CircomStackValueLocation::MemoryPtrWASMLocal(_) => {
                         // doing nothing
                     },
@@ -506,8 +518,18 @@ impl CircomStackFrame {
 
     /// Generates loading Circom value on top of WASM stack for passing as function parameter
     pub fn gen_wasm_stack_load(&mut self, val: CircomStackValueRef) {
-        let (_, loc) = self.value(&val);
+        let (tp, loc) = self.value(&val);
         match loc {
+            CircomStackValueLocation::WASMConst(val) => {
+                match tp {
+                    CircomValueType::WASM(wasm_type) => {
+                        self.func.borrow_mut().gen_const(wasm_type, val);
+                    },
+                    CircomValueType::FR => {
+                        panic!("FR should not be here");
+                    }
+                }
+            }
             CircomStackValueLocation::MemoryPtrConst(addr) => {
                 self.func.borrow_mut().gen_const(WASMType::PTR, addr as i64);
             },
@@ -541,6 +563,9 @@ impl CircomStackFrame {
             {
                 let val = self.values.last().unwrap().borrow();
                 match &val.loc {
+                    CircomStackValueLocation::WASMConst(_) => {
+                        // doing nothing
+                    }
                     CircomStackValueLocation::MemoryPtrConst(_) => {
                         // doing nothing
                     }
@@ -608,6 +633,9 @@ impl CircomStackFrame {
             .enumerate()
             .map(|(idx, val)| {
                 let loc_str = match &val.borrow().loc {
+                    CircomStackValueLocation::WASMConst(val) => {
+                        format!("WASM CONST {}", val)
+                    }
                     CircomStackValueLocation::MemoryPtrConst(addr) => {
                         format!("MEM PTR CONST {}", addr)
                     }

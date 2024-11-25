@@ -1,11 +1,13 @@
 
 use super::types::*;
+use super::wasm::*;
 
 
 /// FR context, stores references to FR functions
 #[derive(Clone)]
 pub struct FRContext {
     pub raw_copy: CircomFunctionRef,
+    pub is_true: CircomFunctionRef,
 
     pub copy: CircomFunctionRef,
     pub add: CircomFunctionRef,
@@ -37,12 +39,19 @@ impl FRContext {
     /// Creates new context
     pub fn new() -> FRContext {
         let fr_raw_copy_type = CircomFunctionType::new(
-            vec![CircomValueType::WASM(super::WASMType::I64)],
+            vec![CircomValueType::WASM(WASMType::I64)],
             vec![CircomValueType::FR]);
         let fr_raw_copy = CircomFunctionRef::new("Fr_rawCopyS2L".to_string(), fr_raw_copy_type);
 
+        let fr_is_true_type = CircomFunctionType::new(
+            vec![CircomValueType::FR],
+            vec![CircomValueType::WASM(WASMType::I32)]
+        );
+        let fr_is_true = CircomFunctionRef::new("Fr_isTrue".to_string(), fr_is_true_type);
+
         return FRContext {
             raw_copy: fr_raw_copy,
+            is_true: fr_is_true,
 
             copy: Self::create_fr_func_ref("Fr_copy", 1, 1),
             add: Self::create_fr_func_ref("Fr_add", 2, 1),

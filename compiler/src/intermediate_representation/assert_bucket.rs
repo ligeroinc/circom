@@ -68,8 +68,18 @@ impl WriteWasm for AssertBucket {
 }
 
 impl GenerateLigetron for AssertBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before assert bucket");
+        producer.gen_comment("before assert bucket");
+
+        // generating code for calculating assert argument
+        self.evaluate.generate_ligetron(producer);
+
+        // generating assert operation
+        producer.assert();
+
+        producer.debug_dump_state("after assert bucket");
+        producer.gen_comment("after assert bucket");
     }
 }
 

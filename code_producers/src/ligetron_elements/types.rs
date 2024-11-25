@@ -47,12 +47,23 @@ pub struct CircomFunctionType {
 }
 
 impl CircomFunctionType {
-    /// Constructs new function type with specified parameters and return types
+    /// Creates new function type with specified parameters and return types
     pub fn new(params: Vec<CircomValueType>, ret_types: Vec<CircomValueType>) -> CircomFunctionType {
         return CircomFunctionType {
             params: params,
             ret_types: ret_types
         };
+    }
+
+    /// Creates new function type from WASM function type
+    pub fn from_wasm(wasm_func: &WASMFunctionType) -> CircomFunctionType {
+        let params = wasm_func.params().iter()
+            .map(|t| CircomValueType::WASM(*t))
+            .collect::<Vec<_>>();
+        let ret_types = wasm_func.ret_types().iter()
+            .map(|t| CircomValueType::WASM(*t))
+            .collect::<Vec<_>>();
+        return CircomFunctionType::new(params, ret_types);
     }
 
     /// Returns reference to vector of parameters
@@ -170,6 +181,12 @@ impl CircomFunctionRef {
             name_: name,
             type_: tp
         };
+    }
+
+    /// Creates function reference from WASM function reference
+    pub fn from_wasm(wasm_func: &WASMFunctionRef) -> CircomFunctionRef {
+        return CircomFunctionRef::new(wasm_func.name().clone(),
+                                      CircomFunctionType::from_wasm(wasm_func.tp()));
     }
 
     /// Returns function name
