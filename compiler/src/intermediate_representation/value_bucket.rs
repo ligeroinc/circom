@@ -76,7 +76,7 @@ impl WriteWasm for ValueBucket {
 impl GenerateLigetron for ValueBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before value bucket");
-        producer.gen_comment("before value bucket");
+        producer.gen_comment("value bucket begin");
 
         match self.parse_as {
             ValueType::U32 => {
@@ -88,7 +88,7 @@ impl GenerateLigetron for ValueBucket {
         }
 
         producer.debug_dump_state("after value bucket");
-        producer.gen_comment("after value bucket");
+        producer.gen_comment("value bucket end");
     }
 }
 

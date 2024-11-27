@@ -3,6 +3,7 @@ use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
 use code_producers::ligetron_elements::*;
+use super::address_type::generate_ligetron_load_ref;
 
 #[derive(Clone)]
 pub struct LoadBucket {
@@ -40,9 +41,10 @@ impl ToString for LoadBucket {
         let template_id = self.message_id.to_string();
         let address = self.address_type.to_string();
         let src = self.src.to_string();
+        let size = self.context.size.to_string();
         format!(
-            "LOAD(line:{},template_id:{},address_type:{},src:{})",
-            line, template_id, address, src
+            "LOAD(line: {}, template_id: {}, address_type: {}, size: {}, src: {})",
+            line, template_id, address, size, src
         )
     }
 }
@@ -252,38 +254,7 @@ impl WriteWasm for LoadBucket {
 impl GenerateLigetron for LoadBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before load bucket");
-
-        match &self.src {
-            LocationRule::Indexed { location, .. } => {
-                match &self.address_type {
-                    AddressType::Variable => {
-                        // extracting variable number from location instruction
-                        match location.as_ref() {
-                            Instruction::Value(value) => {
-                                producer.load_local_var_ref(value.value);
-                            },
-                            _ => { panic!("indexed signal load location is not a constant value"); }
-                        }
-                    }
-                    AddressType::Signal => {
-                        // extracting signal number from location instruction
-                        match location.as_ref() {
-                            Instruction::Value(value) => {
-                                producer.load_signal_ref(value.value);
-                            },
-                            _ => { panic!("indexed signal load location is not a constant value"); }
-                        }
-                    }
-                    AddressType::SubcmpSignal { .. } => {
-                        panic!("NYI");
-                    }
-                }
-            }
-            LocationRule::Mapped { .. } => {
-                panic!("NYI");
-            }
-        }
-
+        generate_ligetron_load_ref(producer, &self.src, &self.address_type, &self.context.size);
         producer.debug_dump_state("after load bucket");
     }
 }

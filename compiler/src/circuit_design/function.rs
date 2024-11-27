@@ -3,6 +3,7 @@ use crate::hir::very_concrete_program::Param;
 use crate::intermediate_representation::InstructionList;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
+use code_producers::ligetron_elements;
 use code_producers::wasm_elements::*;
 use code_producers::ligetron_elements::*;
 //use std::io::Write;
@@ -91,11 +92,17 @@ impl WriteWasm for FunctionCodeInfo {
 
 impl GenerateLigetron for FunctionCodeInfo {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
-        // starting new function
-        producer.new_function(&self.header, self.max_number_of_vars);
+        let ret_val_size: usize =
+        if self.returns.len() == 0 {
+            1
+        } else if self.returns.len() == 1 {
+            *self.returns.first().unwrap()
+        } else {
+            panic!("NYI");
+        };
 
-        // adding function return value
-        producer.func().add_circom_ret_val("ret_val");
+        // starting new function
+        producer.new_function(&self.header, self.max_number_of_vars, ret_val_size);
 
         // adding function parameters
         for par in &self.params {

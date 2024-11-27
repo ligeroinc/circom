@@ -3,6 +3,7 @@ use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
 use code_producers::ligetron_elements::*;
+use super::address_type::generate_ligetron_load_ref;
 
 
 #[derive(Clone)]
@@ -46,9 +47,11 @@ impl ToString for StoreBucket {
         let dest_type = self.dest_address_type.to_string();
         let dest = self.dest.to_string();
         let src = self.src.to_string();
+        let src_size = self.src_context.size.to_string();
+        let dst_size = self.context.size.to_string();
         format!(
-            "STORE(line:{},template_id:{},dest_type:{},dest:{},src:{})",
-            line, template_id, dest_type, dest, src
+            "STORE(line: {}, template_id: {}, dest_type: {}, src_size:{}, dst_size: {}, dest: {}, src: {})",
+            line, template_id, dest_type, src_size, dst_size, dest, src
         )
     }
 }
@@ -445,66 +448,35 @@ impl GenerateLigetron for StoreBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before store bucket");
 
-        let (_size_dest, _values_dest) = match &self.context.size {
-            SizeOption::Single(value) => (*value, vec![]),
-            SizeOption::Multiple(values) => {
-                (values.len(), values.clone())
+        let dst_size = match &self.context.size {
+            SizeOption::Single(size) => *size,
+            SizeOption::Multiple(_sizes) => {
+                panic!("NYI");
             }
         };
 
-        let (_size_src, _values_src) = match &self.src_context.size {
-            SizeOption::Single(value) => (*value, vec![]),
-            SizeOption::Multiple(values) => {
-                (values.len(), values.clone())
+        let src_size = match &self.src_context.size {
+            SizeOption::Single(size) => *size,
+            SizeOption::Multiple(_sizes) => {
+                panic!("NYI");
             }
         };
+
+        let store_size = std::cmp::min(src_size, dst_size);
 
         producer.gen_comment("store bucket begin");
 
         // loading reference to destination value
-        match &self.dest {
-            LocationRule::Indexed { location, .. } => {
-                match &self.dest_address_type {
-                    AddressType::Variable => {
-                        // extracting variable number from location instruction
-                        match location.as_ref() {
-                            Instruction::Value(value) => {
-                                producer.load_local_var_ref(value.value);
-                            },
-                            _ => { panic!("indexed variable store location is not a constant value"); }
-                        }
-                    }
-                    AddressType::Signal => {
-                        // extracting signal number from location instruction
-                        match location.as_ref() {
-                            Instruction::Value(value) => {
-                                producer.load_signal_ref(value.value);
-                            },
-                            _ => { panic!("indexed signal store location is not a constant value"); }
-                        }
-                    }
-                    AddressType::SubcmpSignal { .. } => {
-                        panic!("NYI");
-                    }
-                }
-            }
-            LocationRule::Mapped { .. }=> {
-                match &self.dest_address_type {
-                    AddressType::SubcmpSignal { .. } => {
-                        panic!("NYI");
-                    }
-                    _ => {
-                        assert!(false);
-                    }
-                }
-            }
-        }
+        generate_ligetron_load_ref(producer,
+                                   &self.dest,
+                                   &self.dest_address_type,
+                                   &self.context.size);
 
         // generating source value
         self.src.as_ref().generate_ligetron(producer);
 
         // generating store
-        producer.store();
+        producer.store_n(store_size);
 
         // discarding store result
         producer.drop();

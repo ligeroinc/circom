@@ -254,7 +254,7 @@ impl MemoryStackFrame {
     }
 
     /// Generates loading address of memory stack value to WASM stack
-    pub fn gen_load_value_addr(&self, val_ref: &MemoryStackValueRef) {
+    pub fn gen_load_value_addr(&self, val_ref: &MemoryStackValueRef, offset: usize) {
         let val = val_ref.value_rc.borrow();
 
         if val.deallocated {
@@ -265,7 +265,11 @@ impl MemoryStackFrame {
             panic!("Stack value offset is less than stack size");
         }
 
-        let val_stack_ptr_offset = self.stack_size - val.offset;
+        if offset >= val.size {
+            panic!("Invalid offset inside value on memory stack")
+        }
+
+        let val_stack_ptr_offset = self.stack_size - val.offset - offset;
         self.inst_gen.borrow_mut().gen_global_get(&self.stack_ptr);
         if val_stack_ptr_offset != 0 {
             self.inst_gen.borrow_mut().gen_const(WASMType::I32, -1 * val_stack_ptr_offset as i64);

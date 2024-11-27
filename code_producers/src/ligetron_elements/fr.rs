@@ -10,6 +10,7 @@ pub struct FRContext {
     pub is_true: CircomFunctionRef,
 
     pub copy: CircomFunctionRef,
+    pub copyn: CircomFunctionRef,
     pub add: CircomFunctionRef,
     pub sub: CircomFunctionRef,
     pub mul: CircomFunctionRef,
@@ -49,11 +50,18 @@ impl FRContext {
         );
         let fr_is_true = CircomFunctionRef::new("Fr_isTrue".to_string(), fr_is_true_type);
 
+        let copyn_type = CircomFunctionType::new(
+            vec![CircomValueType::FR, CircomValueType::WASM(WASMType::I32)],
+            vec![CircomValueType::FR]
+        );
+        let copyn = CircomFunctionRef::new("Fr_copyn".to_string(), copyn_type);
+
         return FRContext {
             raw_copy: fr_raw_copy,
             is_true: fr_is_true,
 
             copy: Self::create_fr_func_ref("Fr_copy", 1, 1),
+            copyn: copyn,
             add: Self::create_fr_func_ref("Fr_add", 2, 1),
             sub: Self::create_fr_func_ref("Fr_sub", 2, 1),
             mul: Self::create_fr_func_ref("Fr_mul", 2, 1),

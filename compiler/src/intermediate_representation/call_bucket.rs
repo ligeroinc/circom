@@ -3,6 +3,7 @@ use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
 use code_producers::ligetron_elements::*;
+use super::address_type::generate_ligetron_load_ref;
 
 #[derive(Clone)]
 pub struct FinalData {
@@ -55,10 +56,12 @@ impl ToString for CallBucket {
     fn to_string(&self) -> String {
         let line = self.line.to_string();
         let template_id = self.message_id.to_string();
-	let ret = match &self.return_info {
+        let ret = match &self.return_info {
             ReturnType::Intermediate { op_aux_no } => {format!("Intermediate({})",op_aux_no.to_string())}
-	    _ => {format!("Final")}
-	};
+	        ReturnType::Final(final_data) => {
+                format!("Final(size: {})", final_data.context.size.to_string())
+            }
+        };
         let mut args = "".to_string();
         for i in &self.arguments {
             args = format!("{}{},", args, i.to_string());
@@ -467,50 +470,19 @@ impl WriteWasm for CallBucket {
 impl GenerateLigetron for CallBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before call bucket");
+        producer.gen_comment("call bucket begin");
 
-        // allocating result for call operation
         match &self.return_info {
             ReturnType::Intermediate { .. } => {
+                // allocating result for call operation
                 producer.alloc_fr_result();
             }
             ReturnType::Final(data) => {
-                match &data.dest {
-                    LocationRule::Indexed { location, .. } => {
-                        match &data.dest_address_type {
-                            AddressType::Variable => {
-                                // extracting variable number from location instruction
-                                match location.as_ref() {
-                                    Instruction::Value(value) => {
-                                        producer.load_local_var_ref(value.value);
-                                    },
-                                    _ => { panic!("indexed variable store location is not a constant value"); }
-                                }
-                            }
-                            AddressType::Signal => {
-                                // extracting signal number from location instruction
-                                match location.as_ref() {
-                                    Instruction::Value(value) => {
-                                        producer.load_signal_ref(value.value);
-                                    },
-                                    _ => { panic!("indexed signal store location is not a constant value"); }
-                                }
-                            }
-                            AddressType::SubcmpSignal { .. } => {
-                                panic!("NYI");
-                            }
-                        }
-                    }
-                    LocationRule::Mapped { .. }=> {
-                        match data.dest_address_type {
-                            AddressType::SubcmpSignal { .. } => {
-                                panic!("NYI");
-                            }
-                            _ => {
-                                assert!(false);
-                            }
-                        }
-                    }
-                }
+                // loading reference to destination value
+                generate_ligetron_load_ref(producer,
+                                           &data.dest,
+                                           &data.dest_address_type,
+                                           &data.context.size);
             }
         }
 
@@ -531,6 +503,7 @@ impl GenerateLigetron for CallBucket {
         }
 
         producer.debug_dump_state("after call bucket");
+        producer.gen_comment("call bucket end");
     }
 }
 

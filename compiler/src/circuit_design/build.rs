@@ -81,13 +81,6 @@ fn build_template_instances(
                 },
             }
         }
-
-        let mut signals_info = Vec::<SignalType>::new();
-        for wire in &template.wires {
-            for _ in 0 .. wire.size() {
-                signals_info.push(wire.xtype());
-            }
-        }
         
         let code_info = CodeInfo {
             cmp_to_type,
@@ -96,7 +89,7 @@ fn build_template_instances(
             message_id: tmp_id,
             params: Vec::new(),
             header: header.clone(),
-            wires: template.wires,
+            wires: template.wires.clone(),
             constants: instance_values,
             files: &c_info.file_library,
             triggers: template.triggers,
@@ -121,7 +114,7 @@ fn build_template_instances(
             number_of_inputs: template.number_of_inputs,
             number_of_outputs: template.number_of_outputs,
             number_of_intermediates: template.number_of_intermediates,
-            signals: signals_info,
+            wires: template.wires,
             has_parallel_sub_cmp: template.has_parallel_sub_cmp,
             ..TemplateCodeInfo::default()
         };

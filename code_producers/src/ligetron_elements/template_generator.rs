@@ -29,14 +29,16 @@ pub enum SignalKind {
 /// Signal info, used to pass signal data from external code to generator
 #[derive(Clone)]
 pub struct SignalInfo {
-    kind: SignalKind
+    kind: SignalKind,
+    size: usize
 }
 
 impl SignalInfo {
     /// Creates new signal info
-    pub fn new(kind: SignalKind) -> SignalInfo {
+    pub fn new(kind: SignalKind, size: usize) -> SignalInfo {
         return SignalInfo {
-            kind: kind
+            kind: kind,
+            size: size
         };
     }
 }
@@ -110,21 +112,27 @@ impl TemplateGenerator {
         // processing template signals
         let mut signals = Vec::<Signal>::new();
         for (idx, sig) in sig_info.iter().enumerate() {
+            let sig_type = if sig.size == 1 {
+                CircomValueType::FR
+            } else {
+                CircomValueType::FRArray(sig.size)
+            };
+
             let signal = match sig.kind {
                 SignalKind::Input => {
                     // adding function parameter for input signal
-                    let par = func.new_param(format!("input_signal_{}", idx), CircomValueType::FR);
+                    let par = func.new_param(format!("input_signal_{}", idx), sig_type);
                     Signal::Input(par)
                 },
                 SignalKind::Output => {
                     // adding return value for output signal
-                    let ret = func.new_ret_val(CircomValueType::FR);
+                    let ret = func.new_ret_val(sig_type, Some(format!("output_signal_{}", idx)));
                     Signal::Output(ret)
                 },
                 SignalKind::Intermediate => {
                     // adding local variable for intermediate signal
                     let var_name = format!("intermediate_signal_{}", idx);
-                    let var = func.new_local_var(var_name, CircomValueType::FR);
+                    let var = func.new_local_var(var_name, sig_type);
                     Signal::Intermediate(var)
                 }
             };
@@ -162,8 +170,25 @@ impl TemplateGenerator {
         return SignalRef::new(idx);
     }
 
+    /// Returns signal size
+    pub fn signal_size(&self, sig: &SignalRef) -> usize {
+        let sig_type = match &self.signals[sig.idx] {
+            Signal::Input(par) => self.func_.borrow().param_type(par),
+            Signal::Output(ret_val) => self.func_.borrow().ret_val_type(ret_val),
+            Signal::Intermediate(var) => self.func_.borrow().local_var_type(var)
+        };
+
+        return match sig_type {
+            CircomValueType::FR => 1,
+            CircomValueType::FRArray(size) => size,
+            CircomValueType::WASM(..) => {
+                panic!("WASM types are not supported for signals");
+            }
+        };
+    }
+
     /// Loads reference to signal on stack
-    pub fn load_signal_ref(&mut self, sig: SignalRef) {
+    pub fn load_signal_ref(&mut self, sig: &SignalRef) {
         let sig = &self.signals[sig.idx];
         match sig {
             Signal::Input(par) => {
@@ -174,6 +199,22 @@ impl TemplateGenerator {
             }
             Signal::Intermediate(loc_var) => {
                 self.func_gen().load_local_var_ref(loc_var);
+            }
+        }
+    }
+
+    /// Loads reference to signal array on stack
+    pub fn load_signal_array_ref(&mut self, sig: &SignalRef, offset: usize, size: usize) {
+        let sig = &self.signals[sig.idx];
+        match sig {
+            Signal::Input(par) => {
+                self.func_gen().load_param_array_ref(par, offset, size);
+            }
+            Signal::Output(ret_val) => {
+                self.func_gen().load_ret_val_array_ref(ret_val, offset, size);
+            }
+            Signal::Intermediate(loc_var) => {
+                self.func_gen().load_local_var_array_ref(loc_var, offset, size);
             }
         }
     }
@@ -190,11 +231,11 @@ impl TemplateGenerator {
 
         for sig in &self.signals {
             match sig {
-                Signal::Input(_) => {
-                    params.push(CircomValueType::FR);
+                Signal::Input(par) => {
+                    params.push(self.func_.borrow().param_type(par));
                 },
-                Signal::Output(_) => {
-                    ret_types.push(CircomValueType::FR);
+                Signal::Output(ret_val) => {
+                    ret_types.push(self.func_.borrow().ret_val_type(ret_val));
                 },
                 _ => {}
             }

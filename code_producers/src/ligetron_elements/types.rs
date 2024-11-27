@@ -6,14 +6,16 @@ use super::wasm::*;
 #[derive(Clone, PartialEq)]
 pub enum CircomValueType {
     WASM(WASMType),
-    FR
+    FR,
+    FRArray(usize)
 }
 
 impl CircomValueType {
     pub fn is_wasm(&self) -> bool {
         return match self {
             CircomValueType::WASM(_) => true,
-            CircomValueType::FR => false
+            CircomValueType::FR => false,
+            CircomValueType::FRArray(_) => false
         }
     }
 
@@ -24,16 +26,18 @@ impl CircomValueType {
     /// Returns type size in bytes
     pub fn size(&self, fr_32bit_size: usize) -> usize {
         return match self {
-            CircomValueType::FR => { (fr_32bit_size + 2) * 4},
-            CircomValueType::WASM(wasm_type) => wasm_type.size()
+            CircomValueType::WASM(wasm_type) => wasm_type.size(),
+            CircomValueType::FR => (fr_32bit_size + 2) * 4,
+            CircomValueType::FRArray(sz) => CircomValueType::FR.size(fr_32bit_size) * sz
         }
     }
 
     /// Converts type to string
     pub fn to_string(&self) -> String {
         return match self {
+            CircomValueType::WASM(wasm_type) => wasm_type.to_string(),
             CircomValueType::FR => "fr".to_string(),
-            CircomValueType::WASM(wasm_type) => wasm_type.to_string()
+            CircomValueType::FRArray(sz) => format!("fr[{}]", sz)
         }
     }
 }
@@ -113,6 +117,9 @@ impl CircomFunctionType {
                 },
                 CircomValueType::FR => {
                     wasm_func_type.add_param(WASMType::PTR);
+                },
+                CircomValueType::FRArray(_) => {
+                    wasm_func_type.add_param(WASMType::PTR);
                 }
             }
         }
@@ -123,6 +130,9 @@ impl CircomFunctionType {
                     wasm_func_type.add_param(wasm_type.clone());
                 },
                 CircomValueType::FR => {
+                    wasm_func_type.add_param(WASMType::PTR);
+                },
+                CircomValueType::FRArray(_) => {
                     wasm_func_type.add_param(WASMType::PTR);
                 }
             }

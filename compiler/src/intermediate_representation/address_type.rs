@@ -1,4 +1,5 @@
 use super::ir_interface::*;
+use code_producers::ligetron_elements::*;
 
 #[derive(Clone)]
 pub enum StatusInput {
@@ -43,6 +44,56 @@ impl ToString for AddressType {
             Variable => "VARIABLE".to_string(),
             Signal => "SIGNAL".to_string(),
             SubcmpSignal { cmp_address, input_information, .. } => format!("SUBCOMPONENT:{}:{}", cmp_address.to_string(), input_information.to_string()),
+        }
+    }
+}
+
+
+/// Generates loading of value reference for Ligetron target
+pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
+                                  loc: &LocationRule,
+                                  addr_t: &AddressType,
+                                  size: &SizeOption) {
+
+    let sz = match &size {
+        SizeOption::Single(size) => *size,
+        SizeOption::Multiple(_sizes) => {
+            panic!("NYI");
+        }
+    };
+
+    match &loc {
+        LocationRule::Indexed { location, .. } => {
+            match &addr_t {
+                AddressType::Variable => {
+                    // extracting variable number from location instruction
+                    match location.as_ref() {
+                        Instruction::Value(value) => {
+                            if sz == 1 {
+                                producer.load_local_var_ref(value.value);
+                            } else {
+                                producer.load_local_var_array_ref(value.value, sz);
+                            }
+                        },
+                        _ => { panic!("indexed signal load location is not a constant value"); }
+                    }
+                }
+                AddressType::Signal => {
+                    // extracting signal number from location instruction
+                    match location.as_ref() {
+                        Instruction::Value(value) => {
+                            producer.load_signal_ref(value.value, sz);
+                        },
+                        _ => { panic!("indexed signal load location is not a constant value"); }
+                    }
+                }
+                AddressType::SubcmpSignal { .. } => {
+                    panic!("NYI");
+                }
+            }
+        }
+        LocationRule::Mapped { .. } => {
+            panic!("NYI");
         }
     }
 }

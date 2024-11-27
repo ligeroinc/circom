@@ -38,7 +38,9 @@ impl ToString for ReturnBucket {
         let line = self.line.to_string();
         let template_id = self.message_id.to_string();
         let value = self.value.to_string();
-        format!("RETURN(line: {},template_id: {},value: {})", line, template_id, value)
+        let size = self.with_size.to_string();
+        format!("RETURN(line: {}, template_id: {}, size: {}, value: {})",
+                line, template_id, size, value)
     }
 }
 
@@ -97,24 +99,22 @@ impl WriteWasm for ReturnBucket {
 impl GenerateLigetron for ReturnBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before return bucket");
+        producer.gen_comment("return bucket begin");
 
-        if self.with_size == 1 {
-            // loading pointer to return value on stack
-            producer.load_ret_val_ref();
+        // loading pointer to return value on stack
+        producer.load_ret_val_ref();
 
-            // generating code for calculating return value
-            self.value.generate_ligetron(producer);
+        // generating code for calculating return value
+        self.value.generate_ligetron(producer);
 
-            // generating store
-            producer.store();
+        // generating store
+        producer.store_n(self.with_size);
 
-            // discarding store result
-            producer.drop();
-        } else {
-            panic!("NYI");
-        }
+        // discarding store result
+        producer.drop();
 
         producer.debug_dump_state("after return bucket");
+        producer.gen_comment("return bucket end");
     }
 }
 

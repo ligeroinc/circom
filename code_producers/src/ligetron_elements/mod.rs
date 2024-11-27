@@ -194,6 +194,25 @@ impl LigetronProducer {
         }
     }
 
+    /// Loads reference to array of local variables or parameter on stack
+    pub fn load_local_var_array_ref(&mut self, start_var_idx: usize, size: usize) {
+        if self.template_gen_.is_some() {
+            // if we are generating template then variable index is real variable index
+            // because Circom compiler does not count input signals as function parameters
+            let var = self.func().local_var(start_var_idx);
+            self.func().load_local_vars_bucket_ref(&var, size);
+        } else {
+            if start_var_idx < self.func().params_count() {
+                panic!("Parater arrays are not supported");
+            } else {
+                // loading local variable
+                let real_var_idx = start_var_idx - self.func().params_count();
+                let var = self.func().local_var(real_var_idx);
+                self.func().load_local_vars_bucket_ref(&var, size);
+            }
+        }
+    }
+
     /// Loads reference to return value on stack
     pub fn load_ret_val_ref(&mut self) {
         let ret_val = self.func().ret_val(0);
@@ -213,7 +232,10 @@ impl LigetronProducer {
     }
 
     /// Starts generation of new function
-    pub fn new_function(&mut self, name: &str, n_local_vars: usize) {
+    pub fn new_function(&mut self,
+                        name: &str,
+                        n_local_vars: usize,
+                        ret_vals_size: usize) {
         assert!(self.func_.is_none());
         let fgen = CircomFunction::new(self.info.size_32_bit,
                                        self.fr.clone(),
@@ -222,6 +244,15 @@ impl LigetronProducer {
                                        name.to_string(),
                                        n_local_vars);
         self.func_ = Some(Rc::new(RefCell::new(fgen)));
+
+        // adding return values
+        if ret_vals_size == 0 {
+            // no return values
+        } else if ret_vals_size == 1 {
+            self.func().new_ret_val(CircomValueType::FR, None);
+        } else {
+            self.func().new_ret_val(CircomValueType::FRArray(ret_vals_size), None);
+        }
     }
 
     /// Finishes function generation
@@ -432,7 +463,7 @@ impl LigetronProducer {
 
     /// Generates entry point function for program.
     pub fn generate_entry(&mut self, func_name: String) {
-        self.new_function(&func_name, 0);
+        self.new_function(&func_name, 0, 0);
         self.func().set_export_name(&func_name);
 
         // initializing memory stack pointer
@@ -509,37 +540,52 @@ impl LigetronProducer {
             args.push(loc);
         }
 
-        // allocating FR values for results
-        self.func().gen_comment("allocating Fr values for main component results");
-        let res_types: Vec<_> = std::iter::repeat([CircomValueType::FR])
-            .flatten()
-            .take(self.info.number_of_main_outputs)
-            .collect();
-        let _ = self.func().alloc_mem_stack(res_types);
+        self.debug_dump_state("BEFORE ENTRY RESULTS");
+
+        let main_comp_func = self.main_comp_run_function();
+
+        // allocating FR array for results
+        self.func().gen_comment("allocating Fr array for main component results");
+        let ret_vals = self.func().alloc_stack_n(main_comp_func.tp().ret_types());
+
+        self.debug_dump_state("AFTER ENTRY RESULTS");
 
         // creating FR values from program arguments with Fr_rawCopyS2L function
-        self.func().gen_comment("creating Fr values with porgram arguments");
-        let fr_args_types: Vec<_> = std::iter::repeat([CircomValueType::FR])
-            .flatten()
-            .take(self.info.number_of_main_inputs)
-            .collect();
-        let fr_args = self.func().alloc_mem_stack(fr_args_types);
 
-        for i in 0 .. self.info.number_of_main_inputs {
-            self.func().load_mem_stack_ptr(CircomValueType::FR, &fr_args[i]);
-            self.func().load_wasm_local(&args[i]);
-            self.func().gen_call(&self.fr.raw_copy);
-            self.func().drop(1);
+        self.func().gen_comment("creating Fr array for porgram arguments");
+        let fr_args = self.func().alloc_stack_n(main_comp_func.tp().params());
+
+        let mut arg_idx = 0;
+        for (fr_arg_idx, par_type) in main_comp_func.tp().params().iter().enumerate() {
+            match par_type {
+                CircomValueType::FRArray(size) => {
+                    for i in 0 .. *size {
+                        self.func().load_stack_array_element_ref(&fr_args[fr_arg_idx], i);
+                        self.func().load_wasm_local(&args[arg_idx]);
+                        self.func().gen_call(&self.fr.raw_copy);
+                        self.func().drop(1);
+                        arg_idx += 1;
+                    }
+                }
+                CircomValueType::FR => {
+                    self.func().load_stack_ref(&fr_args[fr_arg_idx]);
+                    self.func().load_wasm_local(&args[arg_idx]);
+                    self.func().gen_call(&self.fr.raw_copy);
+                    self.func().drop(1);
+                    arg_idx += 1;
+                }
+                CircomValueType::WASM(..) => {
+                    panic!("Component function can't have wasm parameters");
+                }
+            }
         }
+
+        self.debug_dump_state("AFTER ENTRY ARGUMENTS");
 
         // executing main component
         self.func().gen_comment("executing main component");
         self.func().gen_call(&self.main_comp_run_function());
-
-        // discarding results of main component
-        // TODO: should we handle it?
-        self.func().gen_comment(&format!("discarding main component results: {}", self.info.number_of_main_outputs));
-        self.func().drop(self.info.number_of_main_outputs);
+        self.func().drop(ret_vals.len());
 
         // calling exit function at the end of entry function
         // TODO: pass correct exit code?
@@ -624,9 +670,30 @@ impl LigetronProducer {
     }
 
     /// Loads reference to signal with specified index on stack
-    pub fn load_signal_ref(&mut self, sig_idx: usize) {
-        let sig = self.template_gen().signal(sig_idx);
-        self.template_gen_mut().load_signal_ref(sig);
+    pub fn load_signal_ref(&mut self, circom_sig_idx: usize, size: usize) {
+        let mut curr_idx: usize = 0;
+        let mut real_sig_idx: usize = 0;
+        loop {
+            let sig = self.template_gen().signal(real_sig_idx);
+            let sig_size = self.template_gen().signal_size(&sig);
+
+            if curr_idx + sig_size > circom_sig_idx {
+                if curr_idx == circom_sig_idx && size == sig_size {
+                    // reference to signal
+                    self.template_gen_mut().load_signal_ref(&sig);
+                } else {
+                    // reference to subarray inside array signal
+                    self.template_gen_mut().load_signal_array_ref(&sig,
+                                                                  circom_sig_idx - curr_idx,
+                                                                  size);
+                }
+
+                break;
+            }
+
+            real_sig_idx += 1;
+            curr_idx += sig_size;
+        }
     }
 
 
@@ -642,6 +709,12 @@ impl LigetronProducer {
     /// in the second stack value
     pub fn store(&mut self) {
         self.func().gen_circom_store();
+    }
+
+    /// Generates saving multiple Circom value located on top of stack to location specified
+    /// in the second stack value
+    pub fn store_n(&mut self, size: usize) {
+        self.func().gen_circom_store_n(size);
     }
 
     /// Drops value from stack

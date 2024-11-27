@@ -1,3 +1,4 @@
+use crate::hir::very_concrete_program::Wire;
 use crate::intermediate_representation::InstructionList;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
@@ -21,7 +22,7 @@ pub struct TemplateCodeInfo {
     pub number_of_inputs: usize,
     pub number_of_outputs: usize, 
     pub number_of_intermediates: usize, // Not used now
-    pub signals: Vec<SignalType>,
+    pub wires: Vec<Wire>,
     pub body: InstructionList,
     pub var_stack_depth: usize,
     pub expression_stack_depth: usize,
@@ -157,14 +158,14 @@ impl GenerateLigetron for TemplateCodeInfo {
         // building list of signals
         let mut signals = Vec::<SignalInfo>::new();
         // adding template signals
-        for sig in &self.signals {
-            let kind = match sig {
+        for sig in &self.wires {
+            let kind = match sig.xtype() {
                 SignalType::Input => SignalKind::Input,
                 SignalType::Output => SignalKind::Output,
                 SignalType::Intermediate => SignalKind::Intermediate
             };
 
-            signals.push(SignalInfo::new(kind));
+            signals.push(SignalInfo::new(kind, sig.size()));
         }
 
         // starting new template

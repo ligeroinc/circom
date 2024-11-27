@@ -133,9 +133,29 @@ impl CircomFunction {
         return self.frame.local_var(idx);
     }
 
+    /// Returns local variable type
+    pub fn local_var_type(&self, var: &CircomLocalVariableRef) -> CircomValueType {
+        return self.frame.local_var_type(var).clone();
+    }
+
     /// Loads reference to local variable on stack
     pub fn load_local_var_ref(&mut self, var_ref: &CircomLocalVariableRef) {
         self.frame.load_local_var_ref(var_ref);
+    }
+
+    /// Loads reference to subarray of array variable on stack
+    pub fn load_local_var_array_ref(&mut self,
+                                    var: &CircomLocalVariableRef,
+                                    offset: usize,
+                                    size: usize) {
+        self.frame.load_local_var_array_ref(var, offset, size);
+    }
+
+    /// Loads reference to array of multiple local variables on stack
+    pub fn load_local_vars_bucket_ref(&mut self,
+                                      start_var: &CircomLocalVariableRef,
+                                      size: usize) {
+        self.frame.load_local_vars_bucket_ref(start_var, size);
     }
 
 
@@ -152,9 +172,19 @@ impl CircomFunction {
         return self.frame.param(idx);
     }
 
+    /// Returns parameter type
+    pub fn param_type(&self, par: &CircomParameterRef) -> CircomValueType {
+        return self.frame.param_type(par).clone();
+    }
+
     /// Loads reference to parameter on stack
     pub fn load_param_ref(&mut self, par_ref: &CircomParameterRef) {
         self.frame.load_param_ref(par_ref);
+    }
+
+    /// Loads reference to parameter subarray on stack
+    pub fn load_param_array_ref(&mut self, par: &CircomParameterRef, offset: usize, size: usize) {
+        self.frame.load_param_array_ref(par, offset, size);
     }
 
 
@@ -162,8 +192,8 @@ impl CircomFunction {
     /// Function return values
 
     /// Creates new return value
-    pub fn new_ret_val(&mut self, tp: CircomValueType) -> CircomReturnValueRef {
-        return self.frame.new_ret_val(tp);
+    pub fn new_ret_val(&mut self, tp: CircomValueType, name: Option<String>) -> CircomReturnValueRef {
+        return self.frame.new_ret_val(tp, name);
     }
 
     /// Returns reference to return value at specified index
@@ -171,13 +201,61 @@ impl CircomFunction {
         return self.frame.ret_val(idx);
     }
 
+    /// Returns return value type
+    pub fn ret_val_type(&self, ret_val: &CircomReturnValueRef) -> CircomValueType {
+        return self.frame.ret_val_type(ret_val).clone();
+    }
+
     /// Loads reference to return value on stack
     pub fn load_ret_val_ref(&mut self, ret_val: &CircomReturnValueRef) {
         self.frame.load_ret_val_ref(ret_val);
     }
-    
 
-    /// Creates new function parameter
+    /// Loads reference to return value subarray on stack
+    pub fn load_ret_val_array_ref(&mut self,
+                                  ret_val: &CircomReturnValueRef,
+                                  offset: usize,
+                                  size: usize) {
+        self.frame.load_ret_val_array_ref(ret_val, offset, size);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    /// Temporary stack values
+
+    /// Allocates temporary stack values
+    pub fn alloc_stack_n(&mut self, types: &Vec<CircomValueType>) -> Vec<CircomStackValueRef> {
+        return self.frame.alloc_stack_n(types);
+    }
+
+    /// Allocates single temporary stack value
+    pub fn alloc_stack(&mut self, tp: CircomValueType) -> CircomStackValueRef {
+        return self.frame.alloc_stack(&tp);
+    }
+
+    /// Loads reference to another stack value on stack
+    pub fn load_stack_ref(&mut self, val: &CircomStackValueRef) {
+        self.frame.load_stack_ref(&val);
+    }
+
+    /// Loads reference to subarray of array stack value
+    pub fn load_stack_array_ref(&mut self,
+                                val: &CircomStackValueRef,
+                                offset: usize,
+                                size: usize) {
+        self.frame.load_stack_array_ref(val, offset, size);
+    }
+
+    /// Loads reference to element of array stack value
+    pub fn load_stack_array_element_ref(&mut self,
+                                        val: &CircomStackValueRef,
+                                        offset: usize) {
+        self.frame.load_stack_array_element_ref(val, offset);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+
 
     /// Adds new WASM named local variable. Returns reference to variable.
     pub fn new_wasm_named_local(&mut self, name: &str, tp: WASMType) -> WASMLocalVariableRef {
@@ -186,7 +264,7 @@ impl CircomFunction {
 
     /// Adds Circom return value to function
     pub fn add_circom_ret_val(&mut self, name: &str) -> CircomValueRef {
-        let ret_val = self.frame.new_ret_val(CircomValueType::FR);
+        let ret_val = self.frame.new_ret_val(CircomValueType::FR, None);
         return CircomValueRef::MemoryRefWASMLocal(self.frame.ret_val_wasm_loc(&ret_val).clone());
     }
 
@@ -282,7 +360,7 @@ impl CircomFunction {
     // Stack manipulation
 
     /// Allocates new value in memory stack frame. Returns reference to allocated value.
-    pub fn alloc_mem_stack(&mut self, types: Vec<CircomValueType>) -> Vec<MemoryStackValueRef> {
+    pub fn alloc_mem_stack(&mut self, types: &Vec<CircomValueType>) -> Vec<MemoryStackValueRef> {
         return self.frame.alloc_mem_stack(types);
     }
 
@@ -309,7 +387,7 @@ impl CircomFunction {
 
     /// Allocates Fr value on stack for result of operation
     pub fn alloc_fr_result(&mut self) {
-        self.frame.alloc_mem_stack(vec![CircomValueType::FR]);
+        self.frame.alloc_mem_stack(&vec![CircomValueType::FR]);
     }
 
     /// Generates Fr mul operation
@@ -453,6 +531,18 @@ impl CircomFunction {
         self.gen_call(&self.fr.copy.clone());
     }
 
+    /// Generates saving multiple Circom value located on top of stack to location specified
+    /// in the second stack value
+    pub fn gen_circom_store_n(&mut self, size: usize) {
+        if size == 1 {
+            self.gen_circom_store();
+        } else {
+            // calling copyn function
+            self.load_const(WASMType::I32, size as i64);
+            self.gen_call(&self.fr.copyn.clone());
+        }
+    }
+
     /// Generates call to function passing values located on top of stack as parameters
     pub fn gen_call(&mut self, func_ref: &CircomFunctionRef) {
         // first calculating number of stack values used in this call
@@ -463,6 +553,9 @@ impl CircomFunction {
                     // WASM return values don't require stack parameter
                 },
                 CircomValueType::FR => {
+                    num_stack_vals += 1;
+                },
+                CircomValueType::FRArray(_) => {
                     num_stack_vals += 1;
                 }
             }
@@ -476,7 +569,7 @@ impl CircomFunction {
             for _ in func_ref.tp().ret_types().iter().filter(|t| t.is_fr()) {
                 let stack_val = self.frame.top(stack_idx);
                 let stack_val_type = self.frame.value_type(&stack_val);
-                if stack_val_type != CircomValueType::FR {
+                if !stack_val_type.is_fr() {
                     panic!("Function call return types mismatch");
                 }
 
