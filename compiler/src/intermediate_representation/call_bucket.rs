@@ -522,6 +522,14 @@ impl GenerateLigetron for CallBucket {
         // generating call operation
         producer.call(&self.symbol, self.arguments.len());
 
+        // dropping call result from stack if result destination is final
+        match &self.return_info {
+            ReturnType::Final(_) => {
+                producer.drop();
+            }
+            _ => {}
+        }
+
         producer.debug_dump_state("after call bucket");
     }
 }
