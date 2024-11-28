@@ -123,44 +123,44 @@ impl CircomReturnValueRef {
 
 /// Location of value stored on Circom stack frame
 #[derive(Clone)]
-pub enum CircomStackValueLocation {
+pub enum CircomStackValueKind {
     /// WASM constant value
-    WASMConst(i64),
+    WASMConst(WASMType, i64),
 
     /// Memory pointer with fixed value
-    MemoryPtrConst(usize),
+    MemoryPtrConst(CircomValueType, usize),
 
     /// Memory pointer referenced by local WASM variable
-    MemoryPtrWASMLocal(WASMLocalVariableRef),
+    MemoryPtrWASMLocal(CircomValueType, WASMLocalVariableRef),
 
     /// Pointer to local variable in memory stack frame
-    MemoryStackLocalPtr(MemoryStackLocalRef),
+    MemoryStackLocalPtr(CircomValueType, MemoryStackLocalRef),
 
     /// Value stored in memory stack
-    MemoryStackValue(MemoryStackValueRef),
+    MemoryStackValue(CircomValueType, MemoryStackValueRef),
 
     /// Pointer to value stored in memory stack
-    MemoryStackValuePtr(MemoryStackValueRef),
+    MemoryStackValuePtr(CircomValueType, MemoryStackValueRef),
 
     /// Value stored in local WASM variable
     WASMLocal(WASMLocalVariableRef),
 
     /// Value stored in WASM stack
-    WASMSTack,
+    WASMSTack(WASMType),
 }
 
-impl CircomStackValueLocation {
+impl CircomStackValueKind {
     /// Returns true if location is a pointer
     pub fn is_ptr(&self) -> bool {
         match self {
-            CircomStackValueLocation::WASMConst(_) => false,
-            CircomStackValueLocation::MemoryPtrConst(_) => true,
-            CircomStackValueLocation::MemoryPtrWASMLocal(_) => true,
-            CircomStackValueLocation::MemoryStackLocalPtr(_) => true,
-            CircomStackValueLocation::MemoryStackValue(_) => false,
-            CircomStackValueLocation::MemoryStackValuePtr(_) => true,
-            CircomStackValueLocation::WASMLocal(_) => false,
-            CircomStackValueLocation::WASMSTack => false
+            CircomStackValueKind::WASMConst(..) => false,
+            CircomStackValueKind::MemoryPtrConst(..) => true,
+            CircomStackValueKind::MemoryPtrWASMLocal(..) => true,
+            CircomStackValueKind::MemoryStackLocalPtr(..) => true,
+            CircomStackValueKind::MemoryStackValue(..) => false,
+            CircomStackValueKind::MemoryStackValuePtr(..) => true,
+            CircomStackValueKind::WASMLocal(..) => false,
+            CircomStackValueKind::WASMSTack(..) => false
         }
     }
 }
@@ -169,11 +169,8 @@ impl CircomStackValueLocation {
 /// Value located in Circom stack frame
 #[derive(Clone)]
 pub struct CircomStackValue {
-    /// Type of value
-    type_: CircomValueType,
-
-    /// Value location
-    loc: CircomStackValueLocation,
+    /// Value kind
+    kind: CircomStackValueKind,
 
     /// Was this value deallocated
     deallocated: bool
@@ -181,10 +178,9 @@ pub struct CircomStackValue {
 
 impl CircomStackValue {
     /// Creates new stack value
-    fn new(tp: CircomValueType, loc: CircomStackValueLocation) -> CircomStackValue {
+    fn new(kind: CircomStackValueKind) -> CircomStackValue {
         return CircomStackValue {
-            type_: tp,
-            loc: loc,
+            kind: kind,
             deallocated: false
         };
     }
@@ -387,25 +383,46 @@ impl CircomStackFrame {
     ////////////////////////////////////////////////////////////
     /// Stack values
 
-    /// Returns type and location of stack value
-    pub fn value(&self, val_ref: &CircomStackValueRef) ->
-            (CircomValueType, CircomStackValueLocation) {
+    /// Returns stack value kind
+    pub fn value_kind(&self, val_ref: &CircomStackValueRef) -> CircomStackValueKind {
         let val = val_ref.value_rc.borrow();
         if val.deallocated {
             panic!("Access to deallocated stack value");
         }
 
-        return (val.type_.clone(), val.loc.clone());
+        return val.kind.clone();
+    }
+
+    /// Returns stack value type
+    pub fn value_type(&self, val_ref: &CircomStackValueRef) -> CircomValueType {
+        let val = val_ref.value_rc.borrow();
+        if val.deallocated {
+            panic!("Access to deallocated stack value");
+        }
+
+        return match &val.kind {
+            CircomStackValueKind::WASMConst(tp, _) => CircomValueType::WASM(*tp),
+            CircomStackValueKind::MemoryPtrConst(tp, _) => tp.clone(),
+            CircomStackValueKind::MemoryPtrWASMLocal(tp, _) => tp.clone(),
+            CircomStackValueKind::MemoryStackLocalPtr(tp, _) => tp.clone(),
+            CircomStackValueKind::MemoryStackValue(tp, _) => tp.clone(),
+            CircomStackValueKind::MemoryStackValuePtr(tp, _) => tp.clone(),
+            CircomStackValueKind::WASMLocal(wasm_loc) => {
+                let (_, wasm_tp) = self.func.borrow_mut().local(&wasm_loc);
+                CircomValueType::WASM(wasm_tp)
+            },
+            CircomStackValueKind::WASMSTack(wasm_tp) => CircomValueType::WASM(*wasm_tp)
+        };
     }
 
     /// Loads WASM const value on stack
     pub fn load_const(&mut self, tp: WASMType, val: i64) -> CircomStackValueRef {
-        return self.push(CircomValueType::WASM(tp), CircomStackValueLocation::WASMConst(val));
+        return self.push(CircomStackValueKind::WASMConst(tp, val));
     }
 
     /// Pushes value to stack
-    fn push(&mut self, tp: CircomValueType, loc: CircomStackValueLocation) -> CircomStackValueRef {
-        let value = CircomStackValue::new(tp, loc);
+    fn push(&mut self, kind: CircomStackValueKind) -> CircomStackValueRef {
+        let value = CircomStackValue::new(kind);
         let value_rc = Rc::new(RefCell::new(value));
         self.values.push(value_rc.clone());
         return CircomStackValueRef::new(value_rc);
@@ -415,40 +432,39 @@ impl CircomStackFrame {
     pub fn push_mem_const(&mut self,
                           tp: CircomValueType,
                           addr: usize) -> CircomStackValueRef {
-        return self.push(tp, CircomStackValueLocation::MemoryPtrConst(addr));
+        return self.push(CircomStackValueKind::MemoryPtrConst(tp, addr));
     }
 
     /// Pushes value stored in global memory referenced by pointer in WASM local variable
     pub fn push_mem(&mut self,
                     tp: CircomValueType,
                     wasm_loc: WASMLocalVariableRef) -> CircomStackValueRef {
-        return self.push(tp, CircomStackValueLocation::MemoryPtrWASMLocal(wasm_loc));
+        return self.push(CircomStackValueKind::MemoryPtrWASMLocal(tp, wasm_loc));
     }
 
     /// Pushes value stored in memory stack local
     pub fn push_mem_local(&mut self,
                           tp: CircomValueType,
                           mem_loc: MemoryStackLocalRef) -> CircomStackValueRef {
-        return self.push(tp, CircomStackValueLocation::MemoryStackLocalPtr(mem_loc));
+        return self.push(CircomStackValueKind::MemoryStackLocalPtr(tp, mem_loc));
     }
 
     /// Pushes value stored in WASM local
     pub fn push_wasm_local(&mut self, loc: &WASMLocalVariableRef) -> CircomStackValueRef {
         let (_, wasm_type) = self.func.borrow().local(loc);
-        let value_type = CircomValueType::WASM(wasm_type);
-        return self.push(value_type, CircomStackValueLocation::WASMLocal(loc.clone()));
+        return self.push(CircomStackValueKind::WASMLocal(loc.clone()));
     }
 
     /// Pushes value stored in WASM stack
-    pub fn push_wasm_stack(&mut self, tp: CircomValueType) -> CircomStackValueRef {
-        return self.push(tp, CircomStackValueLocation::WASMSTack);
+    pub fn push_wasm_stack(&mut self, tp: WASMType) -> CircomStackValueRef {
+        return self.push(CircomStackValueKind::WASMSTack(tp));
     }
 
     /// Pushes pointer to memory stack value
     pub fn push_mem_stack_ptr(&mut self,
                               tp: CircomValueType,
                               val_ref: &MemoryStackValueRef) -> CircomStackValueRef {
-        return self.push(tp, CircomStackValueLocation::MemoryStackValuePtr(val_ref.clone()));
+        return self.push(CircomStackValueKind::MemoryStackValuePtr(tp, val_ref.clone()));
     }
 
     /// Allocates new circom values on memory stack
@@ -457,8 +473,8 @@ impl CircomStackFrame {
         let stack_vals = self.mem_frame.borrow_mut().alloc(sizes);
 
         for (i, tp) in types.iter().enumerate() {
-            let loc = CircomStackValueLocation::MemoryStackValue(stack_vals[i].clone());
-            self.push(tp.clone(), loc);
+            let kind = CircomStackValueKind::MemoryStackValue(tp.clone(), stack_vals[i].clone());
+            self.push(kind);
         }
 
         return stack_vals;
@@ -471,30 +487,30 @@ impl CircomStackFrame {
         for _ in 0 .. count {
             {
                 let val = self.values.last().unwrap().borrow();
-                match &val.loc {
-                    CircomStackValueLocation::WASMConst(_) => {
+                match &val.kind {
+                    CircomStackValueKind::WASMConst(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::MemoryPtrConst(_) => {
+                    CircomStackValueKind::MemoryPtrConst(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::MemoryPtrWASMLocal(_) => {
+                    CircomStackValueKind::MemoryPtrWASMLocal(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::MemoryStackLocalPtr(_) => {
+                    CircomStackValueKind::MemoryStackLocalPtr(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::MemoryStackValue(_) => {
+                    CircomStackValueKind::MemoryStackValue(..) => {
                         // deallocating space on top of memory stack
                         mem_stack_drop_count += 1;
                     },
-                    CircomStackValueLocation::MemoryStackValuePtr(_) => {
+                    CircomStackValueKind::MemoryStackValuePtr(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::WASMLocal(_) => {
+                    CircomStackValueKind::WASMLocal(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::WASMSTack => {
+                    CircomStackValueKind::WASMSTack(..) => {
                         // doing nothing
                     }
                 }
@@ -518,37 +534,29 @@ impl CircomStackFrame {
 
     /// Generates loading Circom value on top of WASM stack for passing as function parameter
     pub fn gen_wasm_stack_load(&mut self, val: CircomStackValueRef) {
-        let (tp, loc) = self.value(&val);
-        match loc {
-            CircomStackValueLocation::WASMConst(val) => {
-                match tp {
-                    CircomValueType::WASM(wasm_type) => {
-                        self.func.borrow_mut().gen_const(wasm_type, val);
-                    },
-                    CircomValueType::FR => {
-                        panic!("FR should not be here");
-                    }
-                }
+        match self.value_kind(&val) {
+            CircomStackValueKind::WASMConst(wasm_type, val) => {
+                self.func.borrow_mut().gen_const(wasm_type, val);
             }
-            CircomStackValueLocation::MemoryPtrConst(addr) => {
+            CircomStackValueKind::MemoryPtrConst(_, addr) => {
                 self.func.borrow_mut().gen_const(WASMType::PTR, addr as i64);
             },
-            CircomStackValueLocation::MemoryPtrWASMLocal(wasm_loc) => {
+            CircomStackValueKind::MemoryPtrWASMLocal(_, wasm_loc) => {
                 self.func.borrow_mut().gen_local_get(&wasm_loc);
             },
-            CircomStackValueLocation::MemoryStackLocalPtr(stack_loc) => {
+            CircomStackValueKind::MemoryStackLocalPtr(_, stack_loc) => {
                 self.mem_frame.borrow_mut().gen_load_local_addr(&stack_loc);
             },
-            CircomStackValueLocation::MemoryStackValue(stack_val) => {
+            CircomStackValueKind::MemoryStackValue(_, stack_val) => {
                 self.mem_frame.borrow_mut().gen_load_value_addr(&stack_val);
             },
-            CircomStackValueLocation::MemoryStackValuePtr(stack_val) => {
+            CircomStackValueKind::MemoryStackValuePtr(_, stack_val) => {
                 self.mem_frame.borrow_mut().gen_load_value_addr(&stack_val);
             },
-            CircomStackValueLocation::WASMLocal(wasm_loc) => {
+            CircomStackValueKind::WASMLocal(wasm_loc) => {
                 self.func.borrow_mut().gen_local_get(&wasm_loc);
             },
-            CircomStackValueLocation::WASMSTack => {
+            CircomStackValueKind::WASMSTack(..) => {
                 panic!("Duplicating of WASM stack values is not supported");
             }
         }
@@ -562,30 +570,30 @@ impl CircomStackFrame {
         for _ in 0 .. count {
             {
                 let val = self.values.last().unwrap().borrow();
-                match &val.loc {
-                    CircomStackValueLocation::WASMConst(_) => {
+                match &val.kind {
+                    CircomStackValueKind::WASMConst(..) => {
                         // doing nothing
                     }
-                    CircomStackValueLocation::MemoryPtrConst(_) => {
+                    CircomStackValueKind::MemoryPtrConst(..) => {
                         // doing nothing
                     }
-                    CircomStackValueLocation::MemoryPtrWASMLocal(_) => {
+                    CircomStackValueKind::MemoryPtrWASMLocal(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::MemoryStackLocalPtr(_) => {
+                    CircomStackValueKind::MemoryStackLocalPtr(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::MemoryStackValue(_) => {
+                    CircomStackValueKind::MemoryStackValue(..) => {
                         // deallocating space on top of memory stack
                         mem_stack_drop_count += 1;
                     },
-                    CircomStackValueLocation::MemoryStackValuePtr(_) => {
+                    CircomStackValueKind::MemoryStackValuePtr(..) => {
                         // doing nothing for references to memory stack
                     },
-                    CircomStackValueLocation::WASMLocal(_) => {
+                    CircomStackValueKind::WASMLocal(..) => {
                         // doing nothing
                     },
-                    CircomStackValueLocation::WASMSTack => {
+                    CircomStackValueKind::WASMSTack(..) => {
                         // dropping value from top of stack
                         wasm_stack_drop_count += 1;
                     }
@@ -632,34 +640,38 @@ impl CircomStackFrame {
         return self.values.iter()
             .enumerate()
             .map(|(idx, val)| {
-                let loc_str = match &val.borrow().loc {
-                    CircomStackValueLocation::WASMConst(val) => {
-                        format!("WASM CONST {}", val)
+                let kind_str = match &val.borrow().kind {
+                    CircomStackValueKind::WASMConst(tp, val) => {
+                        format!("WASM CONST {} {}", tp.to_string(), val)
                     }
-                    CircomStackValueLocation::MemoryPtrConst(addr) => {
-                        format!("MEM PTR CONST {}", addr)
+                    CircomStackValueKind::MemoryPtrConst(tp, addr) => {
+                        format!("MEM PTR CONST {} {}", tp.to_string(), addr)
                     }
-                    CircomStackValueLocation::MemoryPtrWASMLocal(loc) => {
-                        format!("MEM PTR WASMLOC {}", self.func.borrow().gen_local_ref(loc))
+                    CircomStackValueKind::MemoryPtrWASMLocal(tp, loc) => {
+                        format!("MEM PTR WASMLOC {} {}",
+                                tp.to_string(),
+                                self.func.borrow().gen_local_ref(loc))
                     }
-                    CircomStackValueLocation::MemoryStackLocalPtr(loc) => {
-                        format!("MEM LOCAL {}", self.mem_frame.borrow().dump_local(loc))
+                    CircomStackValueKind::MemoryStackLocalPtr(tp, loc) => {
+                        format!("MEM LOCAL {} {}",
+                                tp.to_string(),
+                                self.mem_frame.borrow().dump_local(loc))
                     }
-                    CircomStackValueLocation::MemoryStackValue(val) => {
-                        format!("MEM STACK {}", val.dump(true))
+                    CircomStackValueKind::MemoryStackValue(tp, val) => {
+                        format!("MEM STACK {} {}", tp.to_string(), val.dump(true))
                     },
-                    CircomStackValueLocation::MemoryStackValuePtr(val) => {
-                        format!("MEM STACK PTR {}", val.dump(true))
+                    CircomStackValueKind::MemoryStackValuePtr(tp, val) => {
+                        format!("MEM STACK PTR {} {}", tp.to_string(), val.dump(true))
                     }
-                    CircomStackValueLocation::WASMLocal(loc) => {
+                    CircomStackValueKind::WASMLocal(loc) => {
                         format!("WASM LOCAL {}", self.func.borrow().gen_local_ref(loc))
                     }
-                    CircomStackValueLocation::WASMSTack => {
-                        format!("WASM STACK")
+                    CircomStackValueKind::WASMSTack(tp) => {
+                        format!("WASM STACK {}", tp.to_string())
                     }
                 };
 
-                return format!("{:3}\t{}\t{}", idx, val.borrow().type_.to_string(), loc_str);
+                return format!("{:3}\t{}", idx, kind_str);
             })
             .collect::<Vec<String>>()
             .join("\n");

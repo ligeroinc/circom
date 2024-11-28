@@ -492,8 +492,8 @@ impl CircomFunction {
             // loading pointers to FR return values to WASM stack
             for _ in func_ref.tp().ret_types().iter().filter(|t| t.is_fr()) {
                 let stack_val = self.frame.top(stack_idx);
-                let (stack_val_tp, _) = self.frame.value(&stack_val);
-                if stack_val_tp != CircomValueType::FR {
+                let stack_val_type = self.frame.value_type(&stack_val);
+                if stack_val_type != CircomValueType::FR {
                     panic!("Function call return types mismatch");
                 }
 
@@ -506,14 +506,14 @@ impl CircomFunction {
             // loading parameters to WASM stack
             for par in func_ref.tp().params() {
                 let stack_val = self.frame.top(stack_idx);
-                let (stack_val_tp, stack_val_loc) = self.frame.value(&stack_val);
-                if *par != stack_val_tp {
-                    panic!("Function call parameter types mismatch: expected {}, found {}",
-                           par.to_string(), stack_val_tp.to_string());
-                }
+                let stack_val_kind = self.frame.value_kind(&stack_val);
+                // if *par != stack_val_tp {
+                //     panic!("Function call parameter types mismatch: expected {}, found {}",
+                //            par.to_string(), stack_val_tp.to_string());
+                // }
 
-                match stack_val_loc {
-                    CircomStackValueLocation::WASMSTack => {
+                match stack_val_kind {
+                    CircomStackValueKind::WASMSTack(..) => {
                         if wasm_stack_loaded {
                             // we can't duplicate values located in WASM stack
                             panic!("Duplicating WASM stack values is not supported");
@@ -536,8 +536,11 @@ impl CircomFunction {
 
         // adding WASM return values to stack
         for ret_type in func_ref.tp().ret_types() {
-            if ret_type.is_wasm() {
-                self.frame.push_wasm_stack(ret_type.clone());
+            match ret_type {
+                CircomValueType::WASM(wasm_type) => {
+                    self.frame.push_wasm_stack(wasm_type.clone());
+                },
+                _ => {}
             }
         }
     }
