@@ -100,8 +100,7 @@ impl GenerateLigetron for ReturnBucket {
 
         if self.with_size == 1 {
             // loading pointer to return value on stack
-            let ret_val = producer.ret_val();
-            producer.load_ref(&ret_val);
+            producer.load_ret_val_ref();
 
             // generating code for calculating return value
             self.value.generate_ligetron(producer);

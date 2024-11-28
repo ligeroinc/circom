@@ -633,16 +633,6 @@ impl LigetronProducer {
     ////////////////////////////////////////////////////////////
     // Fr code generation
 
-    /// Loads reference to value on top of stack
-    pub fn load_ref(&mut self, val: &CircomValueRef) {
-        return self.func().load_ref(val);
-    }
-
-    /// Generates loading Circom value to stack from another location
-    pub fn load(&mut self, val_ref: &CircomValueRef) {
-        self.func().gen_circom_load(val_ref);
-    }
-
     /// Returns reference to return value
     pub fn ret_val(&mut self) -> CircomValueRef {
         return self.func().circom_ret_val(0);

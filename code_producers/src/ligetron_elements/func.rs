@@ -303,11 +303,6 @@ impl CircomFunction {
         return self.frame.push_mem_stack_ptr(tp, val_ref);
     }
 
-    /// Loads reference to value on top of stack
-    pub fn load_ref(&mut self, val: &CircomValueRef) {
-        return self.frame.load_ref(val);
-    }
-
 
     ////////////////////////////////////////////////////////////
     // Fr code generation
@@ -448,18 +443,6 @@ impl CircomFunction {
         } else {
             let var = self.frame.local_var(idx - par_cnt);
             return CircomValueRef::MemoryStackLocal(self.frame.local_var_mem_loc(&var).clone());
-        }
-    }
-
-    /// Generates loading Circom value to stack from another location
-    pub fn gen_circom_load(&mut self, val_ref: &CircomValueRef) {
-        match val_ref {
-            CircomValueRef::MemoryRefWASMLocal(wasm_loc_ref) => {
-                self.frame.push_mem(CircomValueType::FR, wasm_loc_ref.clone());
-            },
-            CircomValueRef::MemoryStackLocal(mem_loc_ref) => {
-                self.frame.push_mem_local(CircomValueType::FR, mem_loc_ref.clone());
-            }
         }
     }
 
