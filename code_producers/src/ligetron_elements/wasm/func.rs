@@ -258,6 +258,11 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_add(tp);
     }
 
+    /// Generates sub instruction
+    pub fn gen_sub(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_sub(tp);
+    }
+
     /// Generates mul instruction
     pub fn gen_mul(&mut self, tp: WASMType) {
         self.inst_gen.borrow_mut().gen_mul(tp);
@@ -271,6 +276,26 @@ impl WASMFunction {
     /// Generates store instruction
     pub fn gen_store(&mut self, tp: WASMType) {
         self.inst_gen.borrow_mut().gen_store(tp);
+    }
+
+    /// Generates if else instruction
+    pub fn gen_if_else(&mut self, tp: WASMType, then_insts: Vec<String>, else_insts: Vec<String>) {
+        self.inst_gen.borrow_mut().gen_if_else(tp, then_insts, else_insts);
+    }
+
+    /// Starts generating if-else block
+    pub fn gen_if(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_if(tp);
+    }
+
+    /// Starts generating else block
+    pub fn gen_else(&mut self) {
+        self.inst_gen.borrow_mut().gen_else();
+    }
+
+    /// Finishes generating if-else block
+    pub fn gen_endif(&mut self) {
+        self.inst_gen.borrow_mut().gen_endif();
     }
 
 

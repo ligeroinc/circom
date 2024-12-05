@@ -5,7 +5,7 @@ use crate::hir::very_concrete_program::*;
 use crate::intermediate_representation::translate;
 use crate::intermediate_representation::translate::{CodeInfo, FieldTracker, TemplateDB, ParallelClusters};
 use code_producers::c_elements::*;
-use code_producers::ligetron_elements::LigetronProducerInfo;
+use code_producers::ligetron_elements::*;
 use code_producers::wasm_elements::*;
 use program_structure::file_definition::FileLibrary;
 use program_structure::ast::SignalType;
@@ -251,6 +251,24 @@ fn initialize_ligetron_producer(vcp: &VCP,
                                 _version: &str) -> LigetronProducerInfo {
     use program_structure::utils::constants::UsefulConstants;
 
+    // building template information
+    let mut templates = HashMap::<usize, TemplateInfo>::new();
+    for templ in &vcp.templates {
+        let mut signals = Vec::<SignalInfo>::new();
+        for sig in &templ.wires {
+            let kind = match sig.xtype() {
+                SignalType::Input => SignalKind::Input,
+                SignalType::Output => SignalKind::Output,
+                SignalType::Intermediate => SignalKind::Intermediate
+            };
+
+            signals.push(SignalInfo::new(kind, sig.size()));
+        }
+
+        let info = TemplateInfo::new(templ.template_header.clone(), signals);
+        templates.insert(templ.template_id, info);
+    }
+
     let initial_node = vcp.get_main_id();
     let prime = UsefulConstants::new(&vcp.prime).get_p().clone();
     return LigetronProducerInfo {
@@ -266,10 +284,9 @@ fn initialize_ligetron_producer(vcp: &VCP,
             "secq256r1" => 1948,
             _ => unreachable!()
         },
-        size_32_bit: prime.bits() / 32 + if prime.bits() % 32 != 0 { 1 } else { 0 },        
-        main_comp_name: vcp.get_main_instance().unwrap().template_header.clone(),
-        number_of_main_inputs: vcp.templates[initial_node].number_of_inputs,
-        number_of_main_outputs: vcp.templates[initial_node].number_of_outputs,
+        size_32_bit: prime.bits() / 32 + if prime.bits() % 32 != 0 { 1 } else { 0 },
+        templates: templates,
+        main_comp_id: vcp.get_main_instance().unwrap().template_id,
         string_table: vec![],
         field_tracking: vec![],
         debug_output: flags.debug_output

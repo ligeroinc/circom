@@ -345,6 +345,11 @@ impl CircomFunction {
         self.func.borrow_mut().gen_add(tp);
     }
 
+    /// Generates sub instruction
+    pub fn gen_sub(&mut self, tp: WASMType) {
+        self.func.borrow_mut().gen_sub(tp);
+    }
+
     /// Generates mul instruction
     pub fn gen_mul(&mut self, tp: WASMType) {
         self.func.borrow_mut().gen_mul(tp);
@@ -353,6 +358,26 @@ impl CircomFunction {
     /// Generates load instruction
     pub fn gen_load(&mut self, tp: WASMType) {
         self.func.borrow_mut().gen_load(tp);
+    }
+
+    /// Generates if else instruction
+    pub fn gen_if_else(&mut self, tp: WASMType, then_insts: Vec<String>, else_insts: Vec<String>) {
+        self.func.borrow_mut().gen_if_else(tp, then_insts, else_insts);
+    }
+
+    /// Starts generating if-else block
+    pub fn gen_if(&mut self, tp: WASMType) {
+        self.func.borrow_mut().gen_if(tp);
+    }
+
+    /// Starts generating else block
+    pub fn gen_else(&mut self) {
+        self.func.borrow_mut().gen_else();
+    }
+
+    /// Finishes generating if-else block
+    pub fn gen_endif(&mut self) {
+        self.func.borrow_mut().gen_endif();
     }
 
 

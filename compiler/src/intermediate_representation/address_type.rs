@@ -87,8 +87,24 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                         _ => { panic!("indexed signal load location is not a constant value"); }
                     }
                 }
-                AddressType::SubcmpSignal { .. } => {
-                    panic!("NYI");
+                AddressType::SubcmpSignal { cmp_address, .. } => {
+                    // extracting subcomponent index from component address
+                    match cmp_address.as_ref() {
+                        Instruction::Value(cmp_idx_val) => {
+                            // extracting signal number from location instruction
+                            match location.as_ref() {
+                                Instruction::Value(sig_idx) => {
+                                    producer.load_subcmp_signal_ref(cmp_idx_val.value,
+                                                                    sig_idx.value,
+                                                                    sz);
+                                },
+                                _ => {
+                                    panic!("indexed signal load location is not a constant value");
+                                }
+                            }
+                        },
+                        _ => { panic!("subcomponent address is not a constant value"); }
+                    };
                 }
             }
         }

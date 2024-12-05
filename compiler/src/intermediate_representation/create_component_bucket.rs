@@ -203,8 +203,24 @@ impl WriteWasm for CreateCmpBucket {
 }
 
 impl GenerateLigetron for CreateCmpBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before create component bucket");
+        producer.gen_comment("create component bucket begin");
+
+        // extracting subcomponent ID
+        let subcmp_id = match self.sub_cmp_id.as_ref() {
+            Instruction::Value(value) => {
+                value.value
+            }
+            _ => {
+                panic!("Subcomponent ID is not a value");
+            }
+        };
+
+        producer.create_subcmp(subcmp_id, self.template_id);
+
+        producer.debug_dump_state("after create component bucket");
+        producer.gen_comment("create component bucket end");
     }
 }
 

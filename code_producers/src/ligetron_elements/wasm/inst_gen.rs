@@ -151,6 +151,19 @@ impl InstructionGenerator {
         self.gen_inst(&format!("{}.add", type_.generate()));
     }
 
+    /// Generates sub instruction
+    pub fn gen_sub(&mut self, type_: WASMType) {
+        if type_ == WASMType::PTR {
+            self.wasm_frame().pop_ptr_ops();
+        } else {
+            self.wasm_frame().pop(type_);
+            self.wasm_frame().pop(type_);
+        }
+        self.wasm_frame().push(type_);
+
+        self.gen_inst(&format!("{}.sub", type_.generate()));
+    }
+
     /// Generates mul instruction
     pub fn gen_mul(&mut self, type_: WASMType) {
         if type_ == WASMType::PTR {
@@ -176,5 +189,45 @@ impl InstructionGenerator {
         self.wasm_frame().pop(tp);
         self.wasm_frame().pop(WASMType::PTR);
         self.gen_inst(&format!("{}.store", tp.generate()));
+    }
+
+    /// Generates if else instruction
+    pub fn gen_if_else(&mut self, tp: WASMType, then_insts: Vec<String>, else_insts: Vec<String>) {
+        self.wasm_frame().pop(tp);
+        self.gen_inst("(if");
+        self.gen_inst("    (then");
+
+        for inst in then_insts {
+            self.gen_inst(&format!("        {}", inst));
+        }
+        
+        self.gen_inst("    )");
+        self.gen_inst("    (else");
+
+        for inst in else_insts {
+            self.gen_inst(&format!("        {}", inst));
+        }
+
+        self.gen_inst("    )");
+        self.gen_inst(")");
+    }
+
+    /// Starts generating if-else block
+    pub fn gen_if(&mut self, tp: WASMType) {
+        self.wasm_frame().pop(tp);
+        self.gen_inst("(if");
+        self.gen_inst("    (then");
+    }
+
+    /// Starts generating else block
+    pub fn gen_else(&mut self) {
+        self.gen_inst("    )");
+        self.gen_inst("    (else");
+    }
+
+    /// Finishes generating if-else block
+    pub fn gen_endif(&mut self) {
+        self.gen_inst("    )");
+        self.gen_inst(")");
     }
 }

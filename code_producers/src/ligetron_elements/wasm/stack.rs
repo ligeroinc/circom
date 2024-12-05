@@ -159,7 +159,7 @@ impl WASMStackFrame {
     /// Adds new WASM named local variable. Returns reference to variable.
     pub fn new_named_local(&mut self, name: &str, type_: WASMType) -> WASMLocalVariableRef {
         let local = WASMLocalVariable::new(Some(name.to_string()), type_);
-        let local_idx = self.locals.len() + self.params.len();
+        let local_idx = self.locals.len();
 
         self.locals.push(local);
         return WASMLocalVariableRef::Local(local_idx);
@@ -168,7 +168,7 @@ impl WASMStackFrame {
     /// Adds new unnamed WASM local variable. Returns reference to variable.
     pub fn new_local(&mut self, type_: WASMType) -> WASMLocalVariableRef {
         let local = WASMLocalVariable::new(None, type_);
-        let local_idx = self.locals.len() + self.params.len();
+        let local_idx = self.locals.len();
 
         self.locals.push(local);
         self.has_unnamed_locals = true;

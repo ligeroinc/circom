@@ -5,23 +5,25 @@ mod ligetron;
 mod log;
 mod memory_stack;
 mod stack;
-mod template_generator;
+mod template;
 mod types;
 mod value;
 mod wasm;
 
 use serde_json::Value;
-pub use template_generator::SignalKind;
-pub use template_generator::SignalInfo;
+pub use template::SignalKind;
+pub use template::SignalInfo;
 
 use fr::*;
 use func::*;
 use ligetron::*;
 use log::*;
-use template_generator::*;
+use template::*;
 use types::*;
 use value::*;
 use wasm::*;
+
+pub use template::TemplateInfo;
 
 use super::wasm_elements::wasm_code_generator::fr_types;
 use super::wasm_elements::wasm_code_generator::fr_data;
@@ -41,9 +43,8 @@ pub struct LigetronProducerInfo {
     pub prime_str: String,
     pub fr_memory_size: usize,
     pub size_32_bit: usize,
-    pub main_comp_name: String,
-    pub number_of_main_inputs: usize,
-    pub number_of_main_outputs: usize,
+    pub main_comp_id: usize,
+    pub templates: HashMap<usize, TemplateInfo>,
     pub string_table: Vec<String>,
     pub field_tracking: Vec<String>,
     pub debug_output: bool
@@ -72,14 +73,11 @@ pub struct LigetronProducer {
     /// Vector of generated module instructions
     instructions: Vec<String>,
 
-    /// Vector of function types for generated templates
-    templates: HashMap<String, CircomFunctionType>,
-
     /// Generator for current function being generated
     func_: Option<Rc<RefCell<CircomFunction>>>,
 
     /// Generator for current template being generated
-    template_gen_: Option<RefCell<TemplateGenerator>>
+    template_: Option<RefCell<Template>>
 }
 
 impl LigetronProducer {
@@ -144,10 +142,9 @@ impl LigetronProducer {
             ligetron: ligetron,
             module_: module,
             stack_ptr: stack_ptr,
-            templates: HashMap::<String, CircomFunctionType>::new(),
             instructions: Vec::<String>::new(),
             func_: None,
-            template_gen_: None,
+            template_: None,
         };
     }
 
@@ -175,7 +172,7 @@ impl LigetronProducer {
 
     /// Loads reference to local variable or parameter on stack
     pub fn load_local_var_ref(&mut self, var_idx: usize) {
-        if self.template_gen_.is_some() {
+        if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
             let var = self.func().local_var(var_idx);
@@ -196,7 +193,7 @@ impl LigetronProducer {
 
     /// Loads reference to array of local variables or parameter on stack
     pub fn load_local_var_array_ref(&mut self, start_var_idx: usize, size: usize) {
-        if self.template_gen_.is_some() {
+        if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
             let var = self.func().local_var(start_var_idx);
@@ -262,6 +259,118 @@ impl LigetronProducer {
         let mut insts = self.func().generate(gen_entry_exit);
         self.instructions.append(&mut insts);
         self.func_ = None
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Templates
+
+    /// Returns reference to current template being generated
+    pub fn template(&self) -> Ref<Template> {
+        return self.template_.as_ref().expect("no current template").borrow();
+    }
+
+    /// Returns reference to mutable current template being generated
+    pub fn template_mut(&self) -> RefMut<Template> {
+        return self.template_.as_ref().expect("no current template").borrow_mut();
+    }
+
+    /// Returns name of run function for template with specified name
+    pub fn templ_run_function_name(&self, name: &str) -> String {
+        return format!("{}_template", name);
+    }
+
+    /// Returns template run function for template with specified ID
+    pub fn templ_run_function(&self, id: usize) -> CircomFunctionRef {
+        let templ = self.info.templates.get(&id).expect("no template found with specified id");
+        let func_name = self.templ_run_function_name(&templ.name());
+        return CircomFunctionRef::new(func_name, templ.function_type());
+    }
+
+    /// Returns run function for main component
+    pub fn main_comp_run_function(&self) -> CircomFunctionRef {
+        return self.templ_run_function(self.info.main_comp_id);
+    }
+
+    /// Starts generating new template
+    pub fn new_template(&mut self, name: &str,
+                        signals: &Vec<SignalInfo>,
+                        n_local_vars: usize) {
+        // creating new template generator
+        assert!(self.template_.is_none());
+        let tgen = Template::new(self.info.size_32_bit,
+                                          self.fr.clone(),
+                                          self.module_.clone(),
+                                          name.to_string(),
+                                          signals,
+                                          n_local_vars,
+                                          self.stack_ptr);
+        self.template_ = Some(RefCell::new(tgen));
+
+        // saving reference to function generator created by template generator
+        assert!(self.func_.is_none());
+        self.func_ = Some(self.template_.as_ref().unwrap().borrow_mut().func_rc());
+    }
+
+    /// Finishes generating template
+    pub fn end_template(&mut self) {
+        // generating final template code in function
+        self.template_mut().end();
+
+        // finishing function generation and adding it to module
+        self.end_function(true);
+
+        // removing current template generator
+        self.template_ = None;
+    }
+
+    /// Loads reference to signal with specified index on stack
+    pub fn load_signal_ref(&mut self, circom_sig_idx: usize, size: usize) {
+        let mut curr_idx: usize = 0;
+        let mut real_sig_idx: usize = 0;
+        loop {
+            let sig = self.template().signal(real_sig_idx);
+            let sig_size = self.template().signal_size(&sig);
+
+            if curr_idx + sig_size > circom_sig_idx {
+                if curr_idx == circom_sig_idx && size == sig_size {
+                    // reference to signal
+                    self.template_mut().load_signal_ref(&sig);
+                } else {
+                    // reference to subarray inside array signal
+                    self.template_mut().load_signal_array_ref(&sig,
+                                                                  circom_sig_idx - curr_idx,
+                                                                  size);
+                }
+
+                break;
+            }
+
+            real_sig_idx += 1;
+            curr_idx += sig_size;
+        }
+    }
+
+    /// Creates new subcomponent
+    pub fn create_subcmp(&mut self, subcmp_id: usize, template_id: usize) {
+        let templ = self.info.templates.get(&template_id)
+            .expect("can't find template with required ID for subcomponent");
+        self.template_mut().create_subcmp(subcmp_id, template_id, &templ);
+    }
+
+    /// Loads reference to subcomponent signal
+    pub fn load_subcmp_signal_ref(&mut self,
+                                  subcmp_idx: usize,
+                                  circom_sig_idx: usize,
+                                  size: usize) {
+        self.template_mut().load_subcmp_signal_ref(subcmp_idx, circom_sig_idx, size);
+    }
+
+    /// Generates code for running subcomponent after store to signal
+    pub fn gen_subcmp_run(&mut self, subcmp_idx: usize, sig_size: usize) {
+        let tid = self.template().subcmp_template_id(subcmp_idx);
+        let run_func = self.templ_run_function(tid);
+        self.template_mut().gen_subcmp_run(subcmp_idx, sig_size, run_func);
     }
 
 
@@ -526,23 +635,35 @@ impl LigetronProducer {
         // TODO: check error code
         self.func().gen_drop();
 
+        let main_comp_func = self.main_comp_run_function();
+
         // saving arguments to local variables
         let mut args = Vec::<WASMLocalVariableRef>::new();
-        self.func().gen_comment("saving arguments to local variables");
-        for i in 1 .. self.info.number_of_main_inputs + 1 {
-            let loc = self.func().new_wasm_named_local(&format!("arg_{}", i), I64);
-            self.func().gen_global_get(&self.stack_ptr);
-            self.func().gen_const(I32, (i * 4) as i64);
-            self.func().gen_add(PTR);
-            self.func().gen_load(PTR);
-            self.func().gen_load(I64);
-            self.func().gen_local_set(&loc);
-            args.push(loc);
+        let mut arg_idx = 1;
+        for par_type in main_comp_func.tp().params() {
+            let sz = match par_type {
+                CircomValueType::FRArray(size) => *size,
+                CircomValueType::FR => 1,
+                CircomValueType::WASM(..) => {
+                    panic!("Component function can't have wasm parameters");
+                }
+            };
+
+            for _ in 0 .. sz {
+                let loc = self.func().new_wasm_named_local(&format!("arg_{}", arg_idx), I64);
+                self.func().gen_global_get(&self.stack_ptr);
+                self.func().gen_const(I32, (arg_idx * 4) as i64);
+                self.func().gen_add(PTR);
+                self.func().gen_load(PTR);
+                self.func().gen_load(I64);
+                self.func().gen_local_set(&loc);
+                args.push(loc);
+
+                arg_idx += 1;
+            }
         }
 
         self.debug_dump_state("BEFORE ENTRY RESULTS");
-
-        let main_comp_func = self.main_comp_run_function();
 
         // allocating FR array for results
         self.func().gen_comment("allocating Fr array for main component results");
@@ -599,101 +720,6 @@ impl LigetronProducer {
         self.func().gen_wasm_call(&proc_exit);
 
         self.end_function(false);
-    }
-
-
-    ////////////////////////////////////////////////////////////
-    // Templates
-
-    /// Returns reference to template generator
-    pub fn template_gen(&self) -> Ref<TemplateGenerator> {
-        return self.template_gen_.as_ref().expect("no current template generator").borrow();
-    }
-
-    /// Returns reference to mutable template generator
-    pub fn template_gen_mut(&self) -> RefMut<TemplateGenerator> {
-        return self.template_gen_.as_ref().expect("no current template generator").borrow_mut();
-    }
-
-    /// Returns name of run function for template with specified name
-    pub fn templ_run_function_name(&self, name: &str) -> String {
-        return format!("{}_template", name);
-    }
-
-    /// Returns template run function for template with specified name
-    pub fn templ_run_function(&self, name: &str) -> CircomFunctionRef {
-        let func_name = self.templ_run_function_name(name);
-        let func_type = self.templates.get(name).unwrap();
-        return CircomFunctionRef::new(func_name, func_type.clone());
-    }
-
-    /// Returns run function for main component
-    pub fn main_comp_run_function(&self) -> CircomFunctionRef {
-        return self.templ_run_function(&self.info.main_comp_name);
-    }
-
-    /// Starts generating new template
-    pub fn new_template(&mut self, name: &str,
-                        signals: &Vec<SignalInfo>,
-                        n_local_vars: usize) {
-        // creating new template generator
-        assert!(self.template_gen_.is_none());
-        let tgen = TemplateGenerator::new(self.info.size_32_bit,
-                                          self.fr.clone(),
-                                          self.module_.clone(),
-                                          name.to_string(),
-                                          signals,
-                                          n_local_vars,
-                                          self.stack_ptr);
-        self.template_gen_ = Some(RefCell::new(tgen));
-
-        // saving reference to function generator created by template generator
-        assert!(self.func_.is_none());
-        self.func_ = Some(self.template_gen_.as_ref().unwrap().borrow_mut().func_gen_rc());
-    }
-
-    /// Finishes generating template
-    pub fn end_template(&mut self) {
-        // generating final template code in function
-        self.template_gen_mut().end();
-
-        // finishing function generation and adding it to module
-        self.end_function(true);
-
-        // adding template into map of templates
-        let templ_name = self.template_gen().name().clone();
-        let func_type = self.template_gen().function_type();
-        self.templates.insert(templ_name, func_type);
-
-        // removing current template generator
-        self.template_gen_ = None;
-    }
-
-    /// Loads reference to signal with specified index on stack
-    pub fn load_signal_ref(&mut self, circom_sig_idx: usize, size: usize) {
-        let mut curr_idx: usize = 0;
-        let mut real_sig_idx: usize = 0;
-        loop {
-            let sig = self.template_gen().signal(real_sig_idx);
-            let sig_size = self.template_gen().signal_size(&sig);
-
-            if curr_idx + sig_size > circom_sig_idx {
-                if curr_idx == circom_sig_idx && size == sig_size {
-                    // reference to signal
-                    self.template_gen_mut().load_signal_ref(&sig);
-                } else {
-                    // reference to subarray inside array signal
-                    self.template_gen_mut().load_signal_array_ref(&sig,
-                                                                  circom_sig_idx - curr_idx,
-                                                                  size);
-                }
-
-                break;
-            }
-
-            real_sig_idx += 1;
-            curr_idx += sig_size;
-        }
     }
 
 
@@ -856,11 +882,6 @@ impl LigetronProducer {
         self.func().gen_call(&func);
     }
 
-    /// Generates return operation
-    pub fn gen_return(&mut self) {
-
-    }
-
 
     ////////////////////////////////////////////////////////////
     // Logging
@@ -932,9 +953,8 @@ impl Default for LigetronProducerInfo {
             prime_str: "bn128".to_string(),
             fr_memory_size: 1948,
             size_32_bit: 8,
-            main_comp_name: "MAIN_COMP".to_string(),
-            number_of_main_inputs: 0,
-            number_of_main_outputs: 0,
+            templates: HashMap::new(),
+            main_comp_id: 0,
             string_table: vec![],
             field_tracking: vec![],
             debug_output: false
