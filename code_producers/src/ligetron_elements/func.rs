@@ -21,6 +21,9 @@ pub struct CircomFunction {
     /// FR context
     fr: FRContext,
 
+    /// Reference to parent module
+    module: Rc<RefCell<WASMModule>>,
+
     /// Reference to underlying WASM function for this Circom function
     func: Rc<RefCell<WASMFunction>>,
 
@@ -60,6 +63,7 @@ impl CircomFunction {
         let mut cfunc = CircomFunction {
             size_32_bit: size_32_bit,
             fr: fr,
+            module: module,
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
             frame: CircomStackFrame::new(size_32_bit, func_rc, mem_frame),
@@ -302,82 +306,152 @@ impl CircomFunction {
 
     /// Generates call instruction
     pub fn gen_wasm_call(&mut self, func: &WASMFunctionRef) {
+        for par in func.tp().params() {
+            self.frame.pop_wasm_stack(par);
+        }
+
         self.func.borrow_mut().gen_call(func);
+
+        for ret_type in func.tp().ret_types() {
+            self.frame.push_wasm_stack(ret_type.clone());
+        }
     }
 
     /// Generates getting value of a local
     pub fn gen_local_get(&mut self, var_ref: &WASMLocalVariableRef) {
-        self.func.borrow_mut().gen_local_get(var_ref);
-    }
+        let (_, tp) = self.func.borrow().local(var_ref);
 
-    /// Generates setting value of a local to specified string expression
-    pub fn gen_local_set_expr(&mut self, local: &WASMLocalVariableRef, expr: &str) {
-        self.func.borrow_mut().gen_local_set_expr(local, expr);
+        self.func.borrow_mut().gen_local_get(var_ref);
+        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates setting value of a local
     pub fn gen_local_set(&mut self, var_ref: &WASMLocalVariableRef) {
+        let (_, tp) = self.func.borrow().local(var_ref);
+
+        self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_local_set(var_ref);
     }
 
     /// Generates getting value of a global
     pub fn gen_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
+        let (_, tp) = self.module.borrow().get_global_ref_and_type(var_ref);
+
         self.func.borrow_mut().gen_global_get(var_ref);
+        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates setting value of a global
     pub fn gen_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
+        let (_, tp) = self.module.borrow().get_global_ref_and_type(var_ref);
+
+        self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_global_set(var_ref);
     }
 
     /// Generates drop instruction
     pub fn gen_drop(&mut self) {
+        self.frame.pop(1);
         self.func.borrow_mut().gen_drop();
     }
 
     /// Generates constant instruction
     pub fn gen_const(&mut self, tp: WASMType, value: i64) {
-        self.func.borrow_mut().gen_const(tp, value);
+        self.func.borrow_mut().gen_const(tp.clone(), value);
+        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates add instruction
     pub fn gen_add(&mut self, tp: WASMType) {
+        if tp == WASMType::PTR {
+            self.frame.pop_wasm_ptr_ops();
+        } else {
+            self.frame.pop_wasm_stack(&tp);
+            self.frame.pop_wasm_stack(&tp);
+        }
+
         self.func.borrow_mut().gen_add(tp);
+
+        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates sub instruction
     pub fn gen_sub(&mut self, tp: WASMType) {
+        if tp == WASMType::PTR {
+            self.frame.pop_wasm_ptr_ops();
+        } else {
+            self.frame.pop_wasm_stack(&tp);
+            self.frame.pop_wasm_stack(&tp);
+        }
+
         self.func.borrow_mut().gen_sub(tp);
+
+        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates mul instruction
     pub fn gen_mul(&mut self, tp: WASMType) {
+        if tp == WASMType::PTR {
+            self.frame.pop_wasm_ptr_ops();
+        } else {
+            self.frame.pop_wasm_stack(&tp);
+            self.frame.pop_wasm_stack(&tp);
+        }
+
         self.func.borrow_mut().gen_mul(tp);
+
+        self.frame.push_wasm_stack(tp);
+    }
+
+    /// Generates eqz instruction
+    pub fn gen_eqz(&mut self, tp: &WASMType) {
+        self.frame.pop_wasm_stack(tp);
+        self.func.borrow_mut().gen_eqz(tp);
     }
 
     /// Generates load instruction
     pub fn gen_load(&mut self, tp: WASMType) {
+        self.frame.pop_wasm_stack(&WASMType::PTR);
         self.func.borrow_mut().gen_load(tp);
-    }
-
-    /// Generates if else instruction
-    pub fn gen_if_else(&mut self, tp: WASMType, then_insts: Vec<String>, else_insts: Vec<String>) {
-        self.func.borrow_mut().gen_if_else(tp, then_insts, else_insts);
+        self.frame.push_wasm_stack(tp);
     }
 
     /// Starts generating if-else block
-    pub fn gen_if(&mut self, tp: WASMType) {
-        self.func.borrow_mut().gen_if(tp);
+    pub fn gen_if(&mut self) {
+        self.frame.pop_wasm_stack(&WASMType::I32);
+        self.func.borrow_mut().gen_if();
+        self.frame.start_branch();
     }
 
     /// Starts generating else block
     pub fn gen_else(&mut self) {
+        self.frame.end_branch();
         self.func.borrow_mut().gen_else();
+        self.frame.start_branch();
     }
 
     /// Finishes generating if-else block
     pub fn gen_endif(&mut self) {
+        self.frame.end_branch();
         self.func.borrow_mut().gen_endif();
+    }
+
+    /// Starts generating loop block
+    pub fn gen_loop_start(&mut self) {
+        self.func.borrow_mut().gen_loop_start();
+        self.frame.start_branch();
+    }
+
+    /// Finishes generating loop block and adds branch to the beginning of loop
+    pub fn gen_loop_end(&mut self) {
+        self.func.borrow_mut().gen_loop_end();
+        self.frame.end_branch();
+    }
+
+    /// Generates conditional exit from current loop
+    pub fn gen_loop_exit(&mut self) {
+        self.func.borrow_mut().gen_loop_exit();
+        self.frame.check_branch();
     }
 
 

@@ -274,7 +274,10 @@ pub struct CircomStackFrame {
     ret_vals: Vec<CircomReturnValue>,
 
     /// Vector of values located on stack
-    values: Vec<Rc<RefCell<CircomStackValue>>>
+    values: Vec<Rc<RefCell<CircomStackValue>>>,
+
+    /// Start indexes of current branches to verify stack
+    branch_starts: Vec<usize>
 }
 
 impl CircomStackFrame {
@@ -289,7 +292,8 @@ impl CircomStackFrame {
             locals: vec![],
             params: vec![],
             ret_vals: vec![],
-            values: vec![]
+            values: vec![],
+            branch_starts: vec![]
         };
     }
 
@@ -711,6 +715,57 @@ impl CircomStackFrame {
         return stack_vals;
     }
 
+    /// Pops single WASM value of specified type from stack
+    pub fn pop_wasm_stack(&mut self, tp: &WASMType) {
+        match self.values.last().expect("expected WASM value, but stack is empty").borrow().kind {
+            CircomStackValueKind::WASMSTack(stack_tp) => {
+                if stack_tp != *tp {
+                    panic!("expected WASM value of type {}, found {}",
+                           tp.to_string(),
+                           stack_tp.to_string());
+                }
+            }
+            _ => {
+                panic!("expected WASM value on stack")
+            }
+        }
+
+        self.pop(1);
+    }
+
+    /// Checks that values located on top of stack is suitable for WASM pointer arithmetics
+    pub fn pop_wasm_ptr_ops(&mut self) {
+        if self.values.len() < 2 {
+            panic!("Expected stack values for pointer arithmetics, but stack size is less than 2");
+        }
+
+        let t1 = match self.values.last().expect("expected WASM value, but stack is empty")
+                           .borrow().kind {
+            CircomStackValueKind::WASMSTack(tp) => tp,
+            _ => {
+                panic!("expected WASM value on stack")
+            }
+        };
+        self.pop(1);
+
+        let t2 = match self.values.last().expect("expected WASM value, but stack is empty")
+                           .borrow().kind {
+            CircomStackValueKind::WASMSTack(tp) => tp,
+            _ => {
+                panic!("expected WASM value on stack")
+            }
+        };
+        self.pop(1);
+
+        if t1 == WASMType::I32 && t2 == WASMType::PTR ||
+           t1 == WASMType::PTR && t2 == WASMType::I32 {
+            return;
+        }
+
+        panic!("Expected stack values for pointer arithmetics, but found: {}, {}",
+               t1.to_string(), t2.to_string());
+    }
+
     /// Pops values from stack
     pub fn pop(&mut self, count: usize) {
         let mut mem_stack_drop_count: usize = 0;
@@ -778,6 +833,16 @@ impl CircomStackFrame {
                         // doing nothing
                     }
                 }
+            }
+
+            // checking for branching
+            match self.branch_starts.last() {
+                Some(idx) => {
+                    if *idx == self.values.len() {
+                        panic!("can't finish branch: additional values present on stack");
+                    }
+                }
+                None => {}
             }
 
             self.values.pop();
@@ -960,6 +1025,16 @@ impl CircomStackFrame {
                 }
             }
 
+            // checking for branching
+            match self.branch_starts.last() {
+                Some(idx) => {
+                    if *idx == self.values.len() {
+                        panic!("can't finish branch: additional values present on stack");
+                    }
+                }
+                None => {}
+            }
+
             self.values.pop();
         }
 
@@ -1119,5 +1194,39 @@ impl CircomStackFrame {
             })
             .collect::<Vec<String>>()
             .join("\n");
+    }
+
+    /// Starts new branch in stack
+    pub fn start_branch(&mut self) {
+        // starting branch in memory stack
+        self.mem_frame.borrow_mut().start_branch();
+
+        self.branch_starts.push(self.values.len());
+    }
+
+    /// Checks that current stack state is equal to state before beginning
+    /// of current branch
+    pub fn check_branch(&self) {
+        self.mem_frame.borrow().check_branch();
+
+        match self.branch_starts.last() {
+            Some(idx) => {
+                if *idx != self.values.len() {
+                    panic!("additional values present on stack for current branch:\n{}",
+                           self.dump());
+                }
+            }
+            None => {
+                panic!("no started branch found");
+            }
+        }
+    }
+
+    /// Finishes branch in stack. Verifies that stack state after branching
+    /// is equal to stack state before branching
+    pub fn end_branch(&mut self) {
+        self.check_branch();
+        let res = self.branch_starts.pop();
+        assert!(res.is_some());
     }
 }

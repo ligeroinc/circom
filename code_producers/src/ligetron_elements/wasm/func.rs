@@ -1,5 +1,6 @@
 
 use super::super::log::*;
+use super::frame::*;
 use super::inst_gen::*;
 use super::module::*;
 use super::stack::*;
@@ -17,6 +18,9 @@ pub struct WASMFunction {
 
     /// Reference to WASM stack frame for this function
     frame: Rc<RefCell<WASMStackFrame>>,
+
+    /// Reference to WASM stack state for this function
+    stack: Rc<RefCell<WASMStackState>>,
 
     /// Reference to instructions generator for this function
     inst_gen: Rc<RefCell<InstructionGenerator>>,
@@ -42,16 +46,21 @@ impl WASMFunction {
         debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
         debug_log!("");
 
-        // creating new wasm stack frame for this function
+        // creating new WASM stack frame for this function
         let frame_rc = Rc::new(RefCell::new(WASMStackFrame::new()));
+
+        // creating new WASM stack state for this function
+        let stack_rc = Rc::new(RefCell::new(WASMStackState::new()));
 
         // creating instructions generator for this function
         let inst_gen = Rc::new(RefCell::new(InstructionGenerator::new(module.clone(),
-                                                                      frame_rc.clone())));
+                                                                      frame_rc.clone(),
+                                                                      stack_rc.clone())));
 
         return WASMFunction {
             module_: module,
             frame: frame_rc,
+            stack: stack_rc,
             inst_gen: inst_gen,
             name_: name,
             ret_types: vec![],
@@ -141,13 +150,13 @@ impl WASMFunction {
 
         // checking that current wasm_stack state corresponds to function return type
         for ret in self.ret_types.iter().rev() {
-            self.frame.borrow_mut().pop(*ret);
+            self.stack.borrow_mut().pop(ret);
         }
 
-        if !self.frame.borrow().is_empty() {
+        if !self.stack.borrow().is_empty() {
             println!("WASM stack is not empty at the end of function {}:\n{}\n",
                      self.name_,
-                     self.frame.borrow().dump());
+                     self.stack.borrow().dump());
         }
 
         let mut instructions = Vec::<String>::new();
@@ -268,24 +277,24 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_mul(tp);
     }
 
+    /// Generates eqz instruction
+    pub fn gen_eqz(&mut self, tp: &WASMType) {
+        self.inst_gen.borrow_mut().gen_eqz(tp);
+    }
+
     /// Generates load instruction
     pub fn gen_load(&mut self, tp: WASMType) {
         self.inst_gen.borrow_mut().gen_load(tp);
     }
 
     /// Generates store instruction
-    pub fn gen_store(&mut self, tp: WASMType) {
+    pub fn gen_store(&mut self, tp: &WASMType) {
         self.inst_gen.borrow_mut().gen_store(tp);
     }
 
-    /// Generates if else instruction
-    pub fn gen_if_else(&mut self, tp: WASMType, then_insts: Vec<String>, else_insts: Vec<String>) {
-        self.inst_gen.borrow_mut().gen_if_else(tp, then_insts, else_insts);
-    }
-
     /// Starts generating if-else block
-    pub fn gen_if(&mut self, tp: WASMType) {
-        self.inst_gen.borrow_mut().gen_if(tp);
+    pub fn gen_if(&mut self) {
+        self.inst_gen.borrow_mut().gen_if();
     }
 
     /// Starts generating else block
@@ -298,12 +307,27 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_endif();
     }
 
+    /// Starts generating loop block
+    pub fn gen_loop_start(&mut self) {
+        self.inst_gen.borrow_mut().gen_loop_start();
+    }
+
+    /// Finishes generating loop block and adds branch to the beginning of loop
+    pub fn gen_loop_end(&mut self) {
+        self.inst_gen.borrow_mut().gen_loop_end();
+    }
+
+    /// Generates conditional exit from current loop
+    pub fn gen_loop_exit(&mut self) {
+        self.inst_gen.borrow_mut().gen_loop_exit();
+    }
+
 
     ////////////////////////////////////////////////////////////
     // Debugging
 
     /// Dump contents of function stack frame to string
     pub fn dump_stack(&self) -> String {
-        return self.frame.borrow().dump();
+        return self.stack.borrow().dump();
     }
 }

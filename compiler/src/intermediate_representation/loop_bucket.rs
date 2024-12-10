@@ -75,8 +75,25 @@ impl WriteWasm for LoopBucket {
 }
 
 impl GenerateLigetron for LoopBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before loop bucket");
+        producer.gen_comment("loop bucket begin");
+
+        producer.gen_loop_start();
+
+        // generating check for loop condition
+        self.continue_condition.generate_ligetron(producer);
+        producer.gen_loop_exit();
+
+        // generating loop body
+        for inst in &self.body {
+            inst.generate_ligetron(producer);
+        }
+
+        producer.gen_loop_end();
+
+        producer.gen_comment("loop bucket end");
+        producer.debug_dump_state("after loop bucket");
     }
 }
 

@@ -99,8 +99,27 @@ impl WriteWasm for BranchBucket {
 }
 
 impl GenerateLigetron for BranchBucket {
-    fn generate_ligetron(&self, _producer: &mut LigetronProducer) {
-        panic!("NYI");
+    fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        producer.debug_dump_state("before loop bucket");
+        producer.gen_comment("loop bucket begin");
+
+        self.cond.generate_ligetron(producer);
+        producer.gen_if();
+
+        for inst in &self.if_branch {
+            inst.generate_ligetron(producer);
+        }
+
+        producer.gen_else();
+
+        for inst in &self.else_branch {
+            inst.generate_ligetron(producer);
+        }
+
+        producer.gen_endif();
+
+        producer.gen_comment("loop bucket end");
+        producer.debug_dump_state("after loop bucket");
     }
 }
 

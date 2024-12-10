@@ -1,5 +1,6 @@
 
 use super::super::log::*;
+use super::frame::*;
 use super::module::*;
 use super::stack::*;
 use super::types::*;
@@ -14,20 +15,29 @@ pub struct InstructionGenerator {
     module_: Rc<RefCell<WASMModule>>,
 
     /// Reference to WASM stack frame for current function
-    wasm_frame_: Rc<RefCell<WASMStackFrame>>,
+    frame_: Rc<RefCell<WASMStackFrame>>,
+
+    /// Reference to WASM stack state for generated code
+    stack_: Rc<RefCell<WASMStackState>>,
 
     /// List of generated instructions
-    insts: Vec<String>
+    insts: Vec<String>,
+
+    /// Current indentation
+    indent: usize,
 }
 
 impl InstructionGenerator {
     /// Creates new instruction generator
     pub fn new(module: Rc<RefCell<WASMModule>>,
-               wasm_frame: Rc<RefCell<WASMStackFrame>>) -> InstructionGenerator {
+               frame: Rc<RefCell<WASMStackFrame>>,
+               stack: Rc<RefCell<WASMStackState>>) -> InstructionGenerator {
         return InstructionGenerator {
             module_: module,
-            wasm_frame_: wasm_frame,
-            insts: vec![]
+            frame_: frame,
+            stack_: stack,
+            insts: vec![],
+            indent: 0
         };
     }
 
@@ -37,8 +47,13 @@ impl InstructionGenerator {
     }
 
     /// Returns reference to wasm stack frame
-    pub fn wasm_frame(&self) -> RefMut<WASMStackFrame> {
-        return self.wasm_frame_.as_ref().borrow_mut();
+    pub fn frame(&self) -> RefMut<WASMStackFrame> {
+        return self.frame_.as_ref().borrow_mut();
+    }
+
+    /// Returns reference to WASM stack state
+    pub fn stack(&self) -> RefMut<WASMStackState> {
+        return self.stack_.as_ref().borrow_mut();
     }
 
     /// Returns list of generated instructions
@@ -49,8 +64,20 @@ impl InstructionGenerator {
     /// Appends instruction to list of instructions
     /// TODO: make private
     pub fn gen_inst(&mut self, instruction: &str) {
-        debug_log!("~~~INST: {}", instruction);
-        self.insts.push(instruction.to_string());
+        let indent_str = (0 .. self.indent * 4).map(|_| " ").collect::<String>();
+        let isnt_with_indent = format!("{}{}", indent_str, instruction);
+        debug_log!("~~~INST: {}", isnt_with_indent);
+        self.insts.push(isnt_with_indent.to_string());
+    }
+
+    /// Increases current indentation by 1
+    pub fn add_indent(&mut self) {
+        self.indent += 1;
+    }
+
+    /// Decreases current indentation by 1
+    pub fn remove_indent(&mut self) {
+        self.indent -= 1;
     }
 
     /// Inserts instructions from another generator into beginning of list of instructions
@@ -75,12 +102,12 @@ impl InstructionGenerator {
     pub fn gen_call(&mut self, func: &WASMFunctionRef) {
         // popping parameters from the wasm stack
         for par in func.type_.params().iter().rev() {
-            self.wasm_frame().pop(*par);
+            self.stack().pop(par);
         }
 
         // pushing return values to the wasm stack
         for ret in func.type_.ret_types() {
-            self.wasm_frame().push(*ret);
+            self.stack().push(*ret);
         }
 
         // generating call instruction
@@ -90,144 +117,172 @@ impl InstructionGenerator {
     /// Generates getting value of a local
     pub fn gen_local_get(&mut self, var_ref: &WASMLocalVariableRef) {
         {
-            let mut frame = self.wasm_frame_.as_ref().borrow_mut();
-            let var_type = frame.local(var_ref).var_type();
-            frame.push(var_type);
+            let var_type = self.frame().local(var_ref).var_type();
+            self.stack().push(var_type);
         }
-        self.gen_inst(&format!("local.get {}", self.wasm_frame().gen_local_ref(var_ref)));
+        self.gen_inst(&format!("local.get {}", self.frame().gen_local_ref(var_ref)));
     }
 
     /// Generates setting value of a local to specified string expression
     pub fn gen_local_set_expr(&mut self, local: &WASMLocalVariableRef, expr: &str) {
-        self.gen_inst(&format!("local.set {} {}", self.wasm_frame().gen_local_ref(local), expr));
+        self.gen_inst(&format!("local.set {} {}", self.frame().gen_local_ref(local), expr));
     }
 
     /// Generates setting valuf of a local to current value on top of wasm stack
     pub fn gen_local_set(&mut self, var_ref: &WASMLocalVariableRef) {
         {
-            let mut frame = self.wasm_frame_.as_ref().borrow_mut();
-            let var_type = frame.local(var_ref).var_type();
-            frame.pop(var_type);
+            let var_type = self.frame().local(var_ref).var_type();
+            self.stack().pop(&var_type);
         }
-        self.gen_inst(&format!("local.set {}", self.wasm_frame().gen_local_ref(var_ref)));
+        self.gen_inst(&format!("local.set {}", self.frame().gen_local_ref(var_ref)));
     }
 
     /// Generates getting value of a global
     pub fn gen_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
         let (ref_str, var_type) = self.module().get_global_ref_and_type(var_ref);
         self.gen_inst(&format!("global.get {}", ref_str));
-        self.wasm_frame().push(var_type);
+        self.stack().push(var_type);
     }
 
     /// Generates setting valuf of a local to current value on top of wasm stack
     pub fn gen_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
         let (ref_str, var_type) = self.module().get_global_ref_and_type(var_ref);
         self.gen_inst(&format!("global.set {}", ref_str));
-        self.wasm_frame().pop(var_type);
+        self.stack().pop(&var_type);
     }
 
     /// Generates drop instruction
     pub fn gen_drop(&mut self) {
-        self.wasm_frame().drop();
+        self.stack().drop();
         self.gen_inst(&format!("drop"));
     }
 
     /// Generates constant instruction
     pub fn gen_const(&mut self, type_: WASMType, value: i64) {
-        self.wasm_frame().push(type_);
+        self.stack().push(type_);
         self.gen_inst(&format!("{}.const {}", type_.generate(), value));
     }
 
     /// Generates add instruction
     pub fn gen_add(&mut self, type_: WASMType) {
         if type_ == WASMType::PTR {
-            self.wasm_frame().pop_ptr_ops();
+            self.stack().pop_ptr_ops();
         } else {
-            self.wasm_frame().pop(type_);
-            self.wasm_frame().pop(type_);
+            self.stack().pop(&type_);
+            self.stack().pop(&type_);
         }
-        self.wasm_frame().push(type_);
 
         self.gen_inst(&format!("{}.add", type_.generate()));
+
+        self.stack().push(type_);
     }
 
     /// Generates sub instruction
     pub fn gen_sub(&mut self, type_: WASMType) {
         if type_ == WASMType::PTR {
-            self.wasm_frame().pop_ptr_ops();
+            self.stack().pop_ptr_ops();
         } else {
-            self.wasm_frame().pop(type_);
-            self.wasm_frame().pop(type_);
+            self.stack().pop(&type_);
+            self.stack().pop(&type_);
         }
-        self.wasm_frame().push(type_);
 
         self.gen_inst(&format!("{}.sub", type_.generate()));
+
+        self.stack().push(type_);
     }
 
     /// Generates mul instruction
     pub fn gen_mul(&mut self, type_: WASMType) {
         if type_ == WASMType::PTR {
-            self.wasm_frame().pop_ptr_ops();
+            self.stack().pop_ptr_ops();
         } else {
-            self.wasm_frame().pop(type_);
-            self.wasm_frame().pop(type_);
+            self.stack().pop(&type_);
+            self.stack().pop(&type_);
         }
-        self.wasm_frame().push(type_);
+        self.stack().push(type_);
 
         self.gen_inst(&format!("{}.mul", type_.generate()));
     }
 
     /// Generates load instruction
     pub fn gen_load(&mut self, tp: WASMType) {
-        self.wasm_frame().pop(WASMType::PTR);
-        self.wasm_frame().push(tp);
+        self.stack().pop(&WASMType::PTR);
+        self.stack().push(tp);
         self.gen_inst(&format!("{}.load", tp.generate()));
     }
 
     /// Generates store instruction
-    pub fn gen_store(&mut self, tp: WASMType) {
-        self.wasm_frame().pop(tp);
-        self.wasm_frame().pop(WASMType::PTR);
+    pub fn gen_store(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.stack().pop(&WASMType::PTR);
         self.gen_inst(&format!("{}.store", tp.generate()));
     }
 
-    /// Generates if else instruction
-    pub fn gen_if_else(&mut self, tp: WASMType, then_insts: Vec<String>, else_insts: Vec<String>) {
-        self.wasm_frame().pop(tp);
-        self.gen_inst("(if");
-        self.gen_inst("    (then");
-
-        for inst in then_insts {
-            self.gen_inst(&format!("        {}", inst));
-        }
-        
-        self.gen_inst("    )");
-        self.gen_inst("    (else");
-
-        for inst in else_insts {
-            self.gen_inst(&format!("        {}", inst));
-        }
-
-        self.gen_inst("    )");
-        self.gen_inst(")");
+    /// Generates eqz instruction
+    pub fn gen_eqz(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.gen_inst(&format!("{}.eqz", tp.generate()));
+        self.stack().push(WASMType::I32);
     }
 
     /// Starts generating if-else block
-    pub fn gen_if(&mut self, tp: WASMType) {
-        self.wasm_frame().pop(tp);
+    pub fn gen_if(&mut self) {
+        self.stack().pop(&WASMType::I32);
         self.gen_inst("(if");
-        self.gen_inst("    (then");
+        self.add_indent();
+        self.gen_inst("(then");
+        self.add_indent();
+
+        self.stack().start_branch();
     }
 
     /// Starts generating else block
     pub fn gen_else(&mut self) {
-        self.gen_inst("    )");
-        self.gen_inst("    (else");
+        self.remove_indent();
+        self.gen_inst(")");
+        self.gen_inst("(else");
+        self.add_indent();
+
+        self.stack().end_branch();
+        self.stack().start_branch();
     }
 
     /// Finishes generating if-else block
     pub fn gen_endif(&mut self) {
-        self.gen_inst("    )");
+        self.remove_indent();
         self.gen_inst(")");
+        self.remove_indent();
+        self.gen_inst(")");
+
+        self.stack().end_branch();
+    }
+
+    /// Starts generating loop block
+    pub fn gen_loop_start(&mut self) {
+        self.gen_inst("(block");
+        self.add_indent();
+        self.gen_inst("(loop");
+        self.add_indent();
+
+        self.stack().start_branch();
+    }
+
+    /// Finishes generating loop block and adds branch to the beginning of loop
+    pub fn gen_loop_end(&mut self) {
+        self.gen_inst("br 0");
+
+        self.remove_indent();
+        self.gen_inst(")");
+        self.remove_indent();
+        self.gen_inst(")");
+
+        self.stack().end_branch();
+    }
+
+    /// Generates conditional exit from current loop
+    pub fn gen_loop_exit(&mut self) {
+        self.stack().pop(&WASMType::I32);
+        self.stack().check_branch();
+        self.gen_inst("br_if 1");
     }
 }

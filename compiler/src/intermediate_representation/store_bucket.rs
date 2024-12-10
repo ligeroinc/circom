@@ -511,6 +511,7 @@ impl GenerateLigetron for StoreBucket {
             _ => {}
         }
 
+        producer.gen_comment("store bucket end");
         producer.debug_dump_state("after store bucket");
     }
 }

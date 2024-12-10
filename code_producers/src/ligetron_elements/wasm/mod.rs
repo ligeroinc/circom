@@ -1,10 +1,12 @@
 
+pub mod frame;
 pub mod func;
 pub mod inst_gen;
 pub mod module;
 pub mod stack;
 pub mod types;
 
+pub use frame::*;
 pub use func::*;
 pub use inst_gen::*;
 pub use module::*;

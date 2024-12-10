@@ -143,7 +143,10 @@ pub struct MemoryStackFrame {
     stack_size: usize,
 
     /// Stack values
-    values: Vec<Rc<RefCell<MemoryStackValue>>>
+    values: Vec<Rc<RefCell<MemoryStackValue>>>,
+
+    /// Start indexes of current branches to verify stack
+    branch_starts: Vec<usize>
 }
 
 impl MemoryStackFrame {
@@ -154,7 +157,7 @@ impl MemoryStackFrame {
                wasm_stack_frame: Rc<RefCell<WASMStackFrame>>) -> MemoryStackFrame {
 
         // creating WASM local for storing frame base
-        let frame_base = inst_gen.borrow_mut().wasm_frame().new_named_local("frame_base_ptr",
+        let frame_base = inst_gen.borrow_mut().frame().new_named_local("frame_base_ptr",
                                                                                  WASMType::PTR);
 
         return MemoryStackFrame {
@@ -166,7 +169,8 @@ impl MemoryStackFrame {
             locals: vec![],
             locals_size: 0,
             stack_size: 0,
-            values: vec![]
+            values: vec![],
+            branch_starts: vec![],
         };
     }
 
@@ -223,7 +227,7 @@ impl MemoryStackFrame {
         // calculating total size of deallocated stack space
         let mut total_size = 0;
         for _ in 0 .. count {
-            match self.values.pop() {
+            match self.values.last() {
                 Some(val_rc) => {
                     val_rc.borrow_mut().deallocated = true;
                     total_size += val_rc.borrow().size;
@@ -232,6 +236,19 @@ impl MemoryStackFrame {
                     panic!("Can't pop value from empty stack");
                 }
             }
+
+            // checking branching
+            match self.branch_starts.last() {
+                Some(idx) => {
+                    if *idx == self.values.len() {
+                        panic!("can't pop value located before current branch");
+                    }
+                }
+                None => {}
+            }
+
+            // removing value
+            self.values.pop();
         }
 
         self.stack_size -= total_size;
@@ -279,8 +296,10 @@ impl MemoryStackFrame {
 
     /// Generates function entry code for allocating stack
     pub fn gen_func_entry(&self) {
+        let stack_rc = Rc::new(RefCell::new(WASMStackState::new()));
         let mut gen = InstructionGenerator::new(self.module.clone(),
-                                                self.wasm_stack_frame.clone());
+                                                self.wasm_stack_frame.clone(),
+                                                stack_rc);
 
         // saving current value of stack pointer into frame base variable
         gen.gen_comment("saving original value of memory stack pointer");
@@ -322,5 +341,33 @@ impl MemoryStackFrame {
             })
             .collect::<Vec<String>>()
             .join("\n");
+    }
+
+    /// Starts new branching in stack
+    pub fn start_branch(&mut self) {
+        self.branch_starts.push(self.values.len());
+    }
+
+    /// Checks that current stack state is equal to state before beginning
+    /// of current branch
+    pub fn check_branch(&self) {
+        match self.branch_starts.last() {
+            Some(idx) => {
+                if *idx != self.values.len() {
+                    panic!("additional values present on stack for current branch");
+                }
+            }
+            None => {
+                panic!("no started branch found");
+            }
+        }
+    }
+
+    /// Finishes branch in stack. Verifies that stack state after branching
+    /// is equal to stack state before branching
+    pub fn end_branch(&mut self) {
+        self.check_branch();
+        let res = self.branch_starts.pop();
+        assert!(res.is_some());
     }
 }

@@ -882,6 +882,40 @@ impl LigetronProducer {
         self.func().gen_call(&func);
     }
 
+    /// Starts generating if-else block using current stack value as condition
+    pub fn gen_if(&mut self) {
+        self.func().gen_call(&self.fr.is_true);
+        self.func().gen_if();
+    }
+
+    /// Starts generating else block
+    pub fn gen_else(&mut self) {
+        self.func().gen_else();
+    }
+
+    /// Finishes generating if-else block
+    pub fn gen_endif(&mut self) {
+        self.func().gen_endif();
+    }
+
+    /// Starts generating loop block
+    pub fn gen_loop_start(&mut self) {
+        self.func().gen_loop_start();
+    }
+
+    /// Finishes generating loop block and adds branch to the beginning of loop
+    pub fn gen_loop_end(&mut self) {
+        self.func().gen_loop_end();
+    }
+
+    /// Generates conditional exit from current loop using current FR value on stack
+    /// as loop condition
+    pub fn gen_loop_exit(&mut self) {
+        self.func().gen_call(&self.fr.is_true);
+        self.func().gen_eqz(&WASMType::I32);
+        self.func().gen_loop_exit();
+    }
+
 
     ////////////////////////////////////////////////////////////
     // Logging

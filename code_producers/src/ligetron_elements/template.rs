@@ -467,7 +467,7 @@ impl Template {
 
         // running subcomponent code if all input signals were set
         self.func().gen_local_get(&comp.input_signals_count);
-        self.func().gen_if(WASMType::I32);
+        self.func().gen_if();
         self.func().gen_else();
 
         // loading subcomponent output signals
@@ -492,6 +492,10 @@ impl Template {
 
         // calling template run function
         self.func().gen_call(&run_func);
+
+        // dropping results of template run function
+        let drop_count = run_func.tp().ret_types().iter().filter(|tp| tp.is_fr()).count();
+        self.func().drop(drop_count);
 
         self.func().gen_endif();
     }
