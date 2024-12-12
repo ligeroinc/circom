@@ -135,9 +135,6 @@ pub enum CircomStackValueKind {
     /// Memory pointer with fixed value
     MemoryPtrConst(CircomValueType, usize),
 
-    /// Memory pointer referenced by local WASM variable
-    MemoryPtrWASMLocal(CircomValueType, WASMLocalVariableRef),
-
     /// Pointer to local variable
     LocalVariablePtr(CircomLocalVariableRef),
 
@@ -190,7 +187,6 @@ impl CircomStackValueKind {
         match self {
             CircomStackValueKind::WASMConst(..) => false,
             CircomStackValueKind::MemoryPtrConst(..) => true,
-            CircomStackValueKind::MemoryPtrWASMLocal(..) => true,
             CircomStackValueKind::LocalVariablePtr(..) => true,
             CircomStackValueKind::LocalVariableArrayPtr(..) => true,
             CircomStackValueKind::LocalVariableArrayElementPtr(..) => true,
@@ -651,7 +647,6 @@ impl CircomStackFrame {
             CircomStackValueKind::ReturnValueArrayElementPtr(_ret, _offset) => {
                 CircomValueType::FR
             },
-            CircomStackValueKind::MemoryPtrWASMLocal(tp, _) => tp,
             CircomStackValueKind::MemoryStackValue(tp, _) => tp,
             CircomStackValueKind::MemoryStackValuePtr(tp, _) => tp,
             CircomStackValueKind::MemoryStackValueArrayPtr(_tp, _val, _offset, size) => {
@@ -798,9 +793,6 @@ impl CircomStackFrame {
                     CircomStackValueKind::MemoryPtrConst(..) => {
                         // doing nothing
                     },
-                    CircomStackValueKind::MemoryPtrWASMLocal(..) => {
-                        // doing nothing
-                    },
                     CircomStackValueKind::LocalVariablePtr(..) => {
                         // doing nothing
                     },
@@ -886,10 +878,6 @@ impl CircomStackFrame {
             }
             CircomStackValueKind::MemoryPtrConst(_, addr) => {
                 self.func.borrow_mut().gen_const(WASMType::PTR, addr as i64);
-                return WASMType::PTR;
-            },
-            CircomStackValueKind::MemoryPtrWASMLocal(_, wasm_loc) => {
-                self.func.borrow_mut().gen_local_get(&wasm_loc);
                 return WASMType::PTR;
             },
             CircomStackValueKind::LocalVariablePtr(var) => {
@@ -1006,9 +994,6 @@ impl CircomStackFrame {
                     CircomStackValueKind::MemoryPtrConst(..) => {
                         // doing nothing
                     }
-                    CircomStackValueKind::MemoryPtrWASMLocal(..) => {
-                        // doing nothing
-                    },
                     CircomStackValueKind::LocalVariablePtr(..) => {
                         // doing nothing
                     },
@@ -1103,11 +1088,6 @@ impl CircomStackFrame {
                     }
                     CircomStackValueKind::MemoryPtrConst(tp, addr) => {
                         format!("MEM PTR CONST {} {}", tp.to_string(), addr)
-                    }
-                    CircomStackValueKind::MemoryPtrWASMLocal(tp, loc) => {
-                        format!("MEM PTR WASMLOC {} {}",
-                                tp.to_string(),
-                                self.func.borrow().gen_local_ref(loc))
                     }
                     CircomStackValueKind::LocalVariablePtr(var) => {
                         let var_loc = self.local_var_mem_loc(var);
