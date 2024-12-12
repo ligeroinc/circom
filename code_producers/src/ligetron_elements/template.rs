@@ -312,7 +312,7 @@ impl Template {
                 self.func().load_ret_val_array_ref(ret_val, offset, size);
             }
             Signal::Intermediate(loc_var) => {
-                self.func().load_local_var_array_ref(loc_var, offset, size);
+                self.func().load_local_var_subarray_ref(loc_var, offset, size);
             }
         }
     }
@@ -383,8 +383,8 @@ impl Template {
         let sig_count_name = format!("subcmp_{}_sig_count", subcmp_id);
         let sig_count = self.func_.borrow_mut().new_wasm_named_local(&sig_count_name,
                                                                      WASMType::I32);
-        self.func().gen_const(WASMType::I32, input_signals_count as i64);
-        self.func().gen_local_set(&sig_count);
+        self.func().gen_wasm_const(WASMType::I32, input_signals_count as i64);
+        self.func().gen_wasm_local_set(&sig_count);
 
         // adding component into list of components
         // checking that subcomponent ID is equal to current number of subcomponents
@@ -433,7 +433,7 @@ impl Template {
                     self.func().load_local_var_ref(&sig_var);
                 } else {
                     // reference to subarray inside array signal
-                    self.func().load_local_var_array_ref(&sig_var,
+                    self.func().load_local_var_subarray_ref(&sig_var,
                                                          circom_sig_idx - curr_idx,
                                                          size);
                 }
@@ -460,15 +460,15 @@ impl Template {
         let comp = &self.subcomponents[subcmp_idx];
 
         // decreasing number of input signals for component
-        self.func().gen_local_get(&comp.input_signals_count);
-        self.func().gen_const(WASMType::I32, sig_size as i64);
-        self.func().gen_sub(WASMType::I32);
-        self.func().gen_local_set(&comp.input_signals_count);
+        self.func().gen_wasm_local_get(&comp.input_signals_count);
+        self.func().gen_wasm_const(WASMType::I32, sig_size as i64);
+        self.func().gen_wasm_sub(WASMType::I32);
+        self.func().gen_wasm_local_set(&comp.input_signals_count);
 
         // running subcomponent code if all input signals were set
-        self.func().gen_local_get(&comp.input_signals_count);
-        self.func().gen_if();
-        self.func().gen_else();
+        self.func().gen_wasm_local_get(&comp.input_signals_count);
+        self.func().gen_wasm_if();
+        self.func().gen_wasm_else();
 
         // loading subcomponent output signals
         for sig in &comp.signals {
@@ -497,6 +497,6 @@ impl Template {
         let drop_count = run_func.tp().ret_types().iter().filter(|tp| tp.is_fr()).count();
         self.func().drop(drop_count);
 
-        self.func().gen_endif();
+        self.func().gen_wasm_endif();
     }
 }

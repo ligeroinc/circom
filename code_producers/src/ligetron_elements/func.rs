@@ -32,6 +32,10 @@ pub struct CircomFunction {
 
     /// Circom stack frame
     frame: CircomStackFrame,
+
+    /// Reference to local variable containing array of FR values for all Circom
+    /// local variables
+    circom_locals_: CircomLocalVariableRef,
 }
 
 impl CircomFunction {
@@ -60,22 +64,23 @@ impl CircomFunction {
 
         let func_rc = Rc::new(RefCell::new(func));
 
-        let mut cfunc = CircomFunction {
+        let mut frame = CircomStackFrame::new(size_32_bit, func_rc.clone(), mem_frame.clone());
+
+        // Allocating array of variables for Circom local variables. This is required
+        // because Circom compiler references all variables by index, and we can't detect
+        // real variable types (arrays vs values).
+        let circom_locals = frame.new_local_var(format!("circom_local_vars"),
+                                                CircomValueType::FRArray(n_local_vars));
+
+        return CircomFunction {
             size_32_bit: size_32_bit,
             fr: fr,
             module: module,
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
-            frame: CircomStackFrame::new(size_32_bit, func_rc, mem_frame),
+            frame: frame,
+            circom_locals_: circom_locals
         };
-
-        // allocating circom local variables
-        for i in 0 .. n_local_vars {
-            let var_name = format!("local_var_{}", i);
-            let _ = cfunc.frame.new_local_var(var_name, CircomValueType::FR);
-        }
-
-        return cfunc;
     }
 
     /// Returns reference to memory stack frame
@@ -147,19 +152,25 @@ impl CircomFunction {
         self.frame.load_local_var_ref(var_ref);
     }
 
-    /// Loads reference to subarray of array variable on stack
-    pub fn load_local_var_array_ref(&mut self,
-                                    var: &CircomLocalVariableRef,
-                                    offset: usize,
-                                    size: usize) {
-        self.frame.load_local_var_array_ref(var, offset, size);
+    /// Loads reference to subarray of array local variable on stack
+    pub fn load_local_var_subarray_ref(&mut self,
+                                       var: &CircomLocalVariableRef,
+                                       offset: usize,
+                                       size: usize) {
+        self.frame.load_local_var_subarray_ref(var, offset, size);
     }
 
-    /// Loads reference to array of multiple local variables on stack
-    pub fn load_local_vars_bucket_ref(&mut self,
-                                      start_var: &CircomLocalVariableRef,
-                                      size: usize) {
-        self.frame.load_local_vars_bucket_ref(start_var, size);
+    /// Loads reference to array local variable element on stack
+    pub fn load_local_var_array_element_ref(&mut self,
+                                            var: &CircomLocalVariableRef,
+                                            offset: usize) {
+        self.frame.load_local_var_array_element_ref(var, offset);
+    }
+
+    /// Returns reference to local variable containing array for all
+    /// preallocated Circom local variables
+    pub fn circom_locals(&self) -> CircomLocalVariableRef {
+        return self.circom_locals_.clone();
     }
 
 
@@ -295,18 +306,19 @@ impl CircomFunction {
     // WASM Instructions generation
 
     /// Generates empty code line
-    pub fn gen_empty(&mut self) {
+    pub fn gen_wasm_empty(&mut self) {
         self.func.borrow_mut().gen_empty();
     }
 
     /// Generates comment with emtpy line before it
-    pub fn gen_comment(&mut self, str: &str) {
+    pub fn gen_wasm_comment(&mut self, str: &str) {
         self.func.borrow_mut().gen_comment(str);
     }
 
     /// Generates call instruction
     pub fn gen_wasm_call(&mut self, func: &WASMFunctionRef) {
-        for par in func.tp().params() {
+        for par in func.tp().params().iter().rev() {
+            println!("POP: {}", par.to_string());
             self.frame.pop_wasm_stack(par);
         }
 
@@ -318,7 +330,7 @@ impl CircomFunction {
     }
 
     /// Generates getting value of a local
-    pub fn gen_local_get(&mut self, var_ref: &WASMLocalVariableRef) {
+    pub fn gen_wasm_local_get(&mut self, var_ref: &WASMLocalVariableRef) {
         let (_, tp) = self.func.borrow().local(var_ref);
 
         self.func.borrow_mut().gen_local_get(var_ref);
@@ -326,7 +338,7 @@ impl CircomFunction {
     }
 
     /// Generates setting value of a local
-    pub fn gen_local_set(&mut self, var_ref: &WASMLocalVariableRef) {
+    pub fn gen_wasm_local_set(&mut self, var_ref: &WASMLocalVariableRef) {
         let (_, tp) = self.func.borrow().local(var_ref);
 
         self.frame.pop_wasm_stack(&tp);
@@ -334,7 +346,7 @@ impl CircomFunction {
     }
 
     /// Generates getting value of a global
-    pub fn gen_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
+    pub fn gen_wasm_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
         let (_, tp) = self.module.borrow().get_global_ref_and_type(var_ref);
 
         self.func.borrow_mut().gen_global_get(var_ref);
@@ -342,7 +354,7 @@ impl CircomFunction {
     }
 
     /// Generates setting value of a global
-    pub fn gen_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
+    pub fn gen_wasm_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
         let (_, tp) = self.module.borrow().get_global_ref_and_type(var_ref);
 
         self.frame.pop_wasm_stack(&tp);
@@ -350,19 +362,19 @@ impl CircomFunction {
     }
 
     /// Generates drop instruction
-    pub fn gen_drop(&mut self) {
+    pub fn gen_wasm_drop(&mut self) {
         self.frame.pop(1);
         self.func.borrow_mut().gen_drop();
     }
 
     /// Generates constant instruction
-    pub fn gen_const(&mut self, tp: WASMType, value: i64) {
+    pub fn gen_wasm_const(&mut self, tp: WASMType, value: i64) {
         self.func.borrow_mut().gen_const(tp.clone(), value);
         self.frame.push_wasm_stack(tp);
     }
 
     /// Generates add instruction
-    pub fn gen_add(&mut self, tp: WASMType) {
+    pub fn gen_wasm_add(&mut self, tp: WASMType) {
         if tp == WASMType::PTR {
             self.frame.pop_wasm_ptr_ops();
         } else {
@@ -376,7 +388,7 @@ impl CircomFunction {
     }
 
     /// Generates sub instruction
-    pub fn gen_sub(&mut self, tp: WASMType) {
+    pub fn gen_wasm_sub(&mut self, tp: WASMType) {
         if tp == WASMType::PTR {
             self.frame.pop_wasm_ptr_ops();
         } else {
@@ -390,7 +402,7 @@ impl CircomFunction {
     }
 
     /// Generates mul instruction
-    pub fn gen_mul(&mut self, tp: WASMType) {
+    pub fn gen_wasm_mul(&mut self, tp: WASMType) {
         if tp == WASMType::PTR {
             self.frame.pop_wasm_ptr_ops();
         } else {
@@ -404,52 +416,52 @@ impl CircomFunction {
     }
 
     /// Generates eqz instruction
-    pub fn gen_eqz(&mut self, tp: &WASMType) {
+    pub fn gen_wasm_eqz(&mut self, tp: &WASMType) {
         self.frame.pop_wasm_stack(tp);
         self.func.borrow_mut().gen_eqz(tp);
     }
 
     /// Generates load instruction
-    pub fn gen_load(&mut self, tp: WASMType) {
+    pub fn gen_wasm_load(&mut self, tp: WASMType) {
         self.frame.pop_wasm_stack(&WASMType::PTR);
         self.func.borrow_mut().gen_load(tp);
         self.frame.push_wasm_stack(tp);
     }
 
     /// Starts generating if-else block
-    pub fn gen_if(&mut self) {
+    pub fn gen_wasm_if(&mut self) {
         self.frame.pop_wasm_stack(&WASMType::I32);
         self.func.borrow_mut().gen_if();
         self.frame.start_branch();
     }
 
     /// Starts generating else block
-    pub fn gen_else(&mut self) {
+    pub fn gen_wasm_else(&mut self) {
         self.frame.end_branch();
         self.func.borrow_mut().gen_else();
         self.frame.start_branch();
     }
 
     /// Finishes generating if-else block
-    pub fn gen_endif(&mut self) {
+    pub fn gen_wasm_endif(&mut self) {
         self.frame.end_branch();
         self.func.borrow_mut().gen_endif();
     }
 
     /// Starts generating loop block
-    pub fn gen_loop_start(&mut self) {
+    pub fn gen_wasm_loop_start(&mut self) {
         self.func.borrow_mut().gen_loop_start();
         self.frame.start_branch();
     }
 
     /// Finishes generating loop block and adds branch to the beginning of loop
-    pub fn gen_loop_end(&mut self) {
+    pub fn gen_wasm_loop_end(&mut self) {
         self.func.borrow_mut().gen_loop_end();
         self.frame.end_branch();
     }
 
     /// Generates conditional exit from current loop
-    pub fn gen_loop_exit(&mut self) {
+    pub fn gen_wasm_loop_exit(&mut self) {
         self.func.borrow_mut().gen_loop_exit();
         self.frame.check_branch();
     }
@@ -672,7 +684,7 @@ impl CircomFunction {
                     panic!("Function call return types mismatch");
                 }
 
-                self.frame.gen_wasm_stack_load(stack_val);
+                self.frame.gen_wasm_stack_load_no_push(stack_val);
                 assert!(stack_idx > 0);
                 stack_idx -= 1;
                 wasm_stack_loaded = true;
@@ -695,7 +707,7 @@ impl CircomFunction {
                         }
                     },
                     _ => {
-                        self.frame.gen_wasm_stack_load(stack_val);
+                        self.frame.gen_wasm_stack_load_no_push(stack_val);
                     }
                 }
 

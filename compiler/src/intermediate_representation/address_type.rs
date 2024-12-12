@@ -75,7 +75,7 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                                 producer.load_local_var_array_ref(value.value, sz);
                             }
                         },
-                        _ => { panic!("indexed signal load location is not a constant value"); }
+                        _ => { panic!("indexed variable load location is not a constant value"); }
                     }
                 }
                 AddressType::Signal => {

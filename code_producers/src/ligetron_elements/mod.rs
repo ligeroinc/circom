@@ -172,11 +172,13 @@ impl LigetronProducer {
 
     /// Loads reference to local variable or parameter on stack
     pub fn load_local_var_ref(&mut self, var_idx: usize) {
+        let circom_locals = self.func().circom_locals();
+
+        // calculating real offset of variable in array of all circom variables
         if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
-            let var = self.func().local_var(var_idx);
-            self.func().load_local_var_ref(&var);
+            self.func().load_local_var_array_element_ref(&circom_locals, var_idx);
         } else {
             if var_idx < self.func().params_count() {
                 // loading function parameter
@@ -185,27 +187,27 @@ impl LigetronProducer {
             } else {
                 // loading local variable
                 let real_var_idx = var_idx - self.func().params_count();
-                let var = self.func().local_var(real_var_idx);
-                self.func().load_local_var_ref(&var);
+                self.func().load_local_var_array_element_ref(&circom_locals, real_var_idx);
             }
         }
+
     }
 
     /// Loads reference to array of local variables or parameter on stack
     pub fn load_local_var_array_ref(&mut self, start_var_idx: usize, size: usize) {
+        let circom_locals = self.func().circom_locals();
+
         if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
-            let var = self.func().local_var(start_var_idx);
-            self.func().load_local_vars_bucket_ref(&var, size);
+            self.func().load_local_var_subarray_ref(&circom_locals, start_var_idx, size);
         } else {
             if start_var_idx < self.func().params_count() {
                 panic!("Parater arrays are not supported");
             } else {
                 // loading local variable
                 let real_var_idx = start_var_idx - self.func().params_count();
-                let var = self.func().local_var(real_var_idx);
-                self.func().load_local_vars_bucket_ref(&var, size);
+                self.func().load_local_var_subarray_ref(&circom_locals, real_var_idx, size);
             }
         }
     }
@@ -563,7 +565,7 @@ impl LigetronProducer {
 
     /// Generates comment with emtpy line before it
     pub fn gen_comment(&mut self, str: &str) {
-        self.func().gen_comment(str);
+        self.func().gen_wasm_comment(str);
     }
 
 
@@ -576,9 +578,9 @@ impl LigetronProducer {
         self.func().set_export_name(&func_name);
 
         // initializing memory stack pointer
-        self.func().gen_comment("initializing memory stack pointer");
-        self.func().gen_const(PTR, self.calc_mem_stack_start() as i64);
-        self.func().gen_global_set(&self.stack_ptr);
+        self.func().gen_wasm_comment("initializing memory stack pointer");
+        self.func().gen_wasm_const(PTR, self.calc_mem_stack_start() as i64);
+        self.func().gen_wasm_global_set(&self.stack_ptr);
 
         // we use beginning of memory stack to temporarly
         // store information about command line arguments
@@ -589,32 +591,32 @@ impl LigetronProducer {
             WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
             "wasi_snapshot_preview1",
             "args_sizes_get");
-        self.func().gen_comment("getting size of program arguments");
-        self.func().gen_global_get(&self.stack_ptr);    // address to store number of args
-        self.func().gen_global_get(&self.stack_ptr);
-        self.func().gen_const(I32, 4);
-        self.func().gen_add(PTR);                       // address to store required args buffer size
+        self.func().gen_wasm_comment("getting size of program arguments");
+        self.func().gen_wasm_global_get(&self.stack_ptr);    // address to store number of args
+        self.func().gen_wasm_global_get(&self.stack_ptr);
+        self.func().gen_wasm_const(I32, 4);
+        self.func().gen_wasm_add(PTR);                       // address to store required args buffer size
         self.func().gen_wasm_call(&args_sizes_get);
 
         // removing call return value with error code from stack
         // TODO: check error code
-        self.func().gen_drop();
+        self.func().gen_wasm_drop();
 
         // saving number of arguments into local
-        self.func().gen_comment("saving number of arguments into argc local");
+        self.func().gen_wasm_comment("saving number of arguments into argc local");
         let argc = self.func().new_wasm_named_local("argc", I32);
-        self.func().gen_global_get(&self.stack_ptr);
-        self.func().gen_load(I32);
-        self.func().gen_local_set(&argc);
+        self.func().gen_wasm_global_get(&self.stack_ptr);
+        self.func().gen_wasm_load(I32);
+        self.func().gen_wasm_local_set(&argc);
 
         // saving size of buffer for arguments into local
-        self.func().gen_comment("saving size of buffer for arguments into argv_size local");
+        self.func().gen_wasm_comment("saving size of buffer for arguments into argv_size local");
         let argv_size = self.func().new_wasm_named_local("argv_size", I32);
-        self.func().gen_global_get(&self.stack_ptr);
-        self.func().gen_const(I32, 4);
-        self.func().gen_add(PTR);
-        self.func().gen_load(I32);
-        self.func().gen_local_set(&argv_size);
+        self.func().gen_wasm_global_get(&self.stack_ptr);
+        self.func().gen_wasm_const(I32, 4);
+        self.func().gen_wasm_add(PTR);
+        self.func().gen_wasm_load(I32);
+        self.func().gen_wasm_local_set(&argv_size);
 
         // getting arguments
         let args_get = self.module().import_function(
@@ -622,18 +624,18 @@ impl LigetronProducer {
             WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
             "wasi_snapshot_preview1",
             "args_get");
-        self.func().gen_comment("getting program arguments");
-        self.func().gen_global_get(&self.stack_ptr);    // address to store pointers to arguments
-        self.func().gen_global_get(&self.stack_ptr);
-        self.func().gen_local_get(&argc);
-        self.func().gen_const(I32, 4);
-        self.func().gen_mul(I32);
-        self.func().gen_add(PTR);
+        self.func().gen_wasm_comment("getting program arguments");
+        self.func().gen_wasm_global_get(&self.stack_ptr);    // address to store pointers to arguments
+        self.func().gen_wasm_global_get(&self.stack_ptr);
+        self.func().gen_wasm_local_get(&argc);
+        self.func().gen_wasm_const(I32, 4);
+        self.func().gen_wasm_mul(I32);
+        self.func().gen_wasm_add(PTR);
         self.func().gen_wasm_call(&args_get);
 
         // removing call result with error code
         // TODO: check error code
-        self.func().gen_drop();
+        self.func().gen_wasm_drop();
 
         let main_comp_func = self.main_comp_run_function();
 
@@ -651,12 +653,12 @@ impl LigetronProducer {
 
             for _ in 0 .. sz {
                 let loc = self.func().new_wasm_named_local(&format!("arg_{}", arg_idx), I64);
-                self.func().gen_global_get(&self.stack_ptr);
-                self.func().gen_const(I32, (arg_idx * 4) as i64);
-                self.func().gen_add(PTR);
-                self.func().gen_load(PTR);
-                self.func().gen_load(I64);
-                self.func().gen_local_set(&loc);
+                self.func().gen_wasm_global_get(&self.stack_ptr);
+                self.func().gen_wasm_const(I32, (arg_idx * 4) as i64);
+                self.func().gen_wasm_add(PTR);
+                self.func().gen_wasm_load(PTR);
+                self.func().gen_wasm_load(I64);
+                self.func().gen_wasm_local_set(&loc);
                 args.push(loc);
 
                 arg_idx += 1;
@@ -666,14 +668,14 @@ impl LigetronProducer {
         self.debug_dump_state("BEFORE ENTRY RESULTS");
 
         // allocating FR array for results
-        self.func().gen_comment("allocating Fr array for main component results");
+        self.func().gen_wasm_comment("allocating Fr array for main component results");
         let ret_vals = self.func().alloc_stack_n(main_comp_func.tp().ret_types());
 
         self.debug_dump_state("AFTER ENTRY RESULTS");
 
         // creating FR values from program arguments with Fr_rawCopyS2L function
 
-        self.func().gen_comment("creating Fr array for porgram arguments");
+        self.func().gen_wasm_comment("creating Fr array for porgram arguments");
         let fr_args = self.func().alloc_stack_n(main_comp_func.tp().params());
 
         let mut arg_idx = 0;
@@ -704,7 +706,7 @@ impl LigetronProducer {
         self.debug_dump_state("AFTER ENTRY ARGUMENTS");
 
         // executing main component
-        self.func().gen_comment("executing main component");
+        self.func().gen_wasm_comment("executing main component");
         self.func().gen_call(&self.main_comp_run_function());
         self.func().drop(ret_vals.len());
 
@@ -715,8 +717,8 @@ impl LigetronProducer {
             WASMFunctionType::new().with_params(&[I32]),
             "wasi_snapshot_preview1",
             "proc_exit");
-        self.func().gen_comment("calling exit function");
-        self.func().gen_const(I32, 0);
+        self.func().gen_wasm_comment("calling exit function");
+        self.func().gen_wasm_const(I32, 0);
         self.func().gen_wasm_call(&proc_exit);
 
         self.end_function(false);
@@ -885,35 +887,35 @@ impl LigetronProducer {
     /// Starts generating if-else block using current stack value as condition
     pub fn gen_if(&mut self) {
         self.func().gen_call(&self.fr.is_true);
-        self.func().gen_if();
+        self.func().gen_wasm_if();
     }
 
     /// Starts generating else block
     pub fn gen_else(&mut self) {
-        self.func().gen_else();
+        self.func().gen_wasm_else();
     }
 
     /// Finishes generating if-else block
     pub fn gen_endif(&mut self) {
-        self.func().gen_endif();
+        self.func().gen_wasm_endif();
     }
 
     /// Starts generating loop block
     pub fn gen_loop_start(&mut self) {
-        self.func().gen_loop_start();
+        self.func().gen_wasm_loop_start();
     }
 
     /// Finishes generating loop block and adds branch to the beginning of loop
     pub fn gen_loop_end(&mut self) {
-        self.func().gen_loop_end();
+        self.func().gen_wasm_loop_end();
     }
 
     /// Generates conditional exit from current loop using current FR value on stack
     /// as loop condition
     pub fn gen_loop_exit(&mut self) {
         self.func().gen_call(&self.fr.is_true);
-        self.func().gen_eqz(&WASMType::I32);
-        self.func().gen_loop_exit();
+        self.func().gen_wasm_eqz(&WASMType::I32);
+        self.func().gen_wasm_loop_exit();
     }
 
 
@@ -926,22 +928,26 @@ impl LigetronProducer {
         let str_offset = self.string_table.get(&str_idx).unwrap();
 
         // generating call to Ligetron print_str function
-        self.func().gen_comment("logging string");
-        self.func().gen_const(PTR, *str_offset as i64);
-        self.func().gen_const(I32, self.info.string_table[str_idx].len() as i64);
+        self.func().gen_wasm_comment("logging string");
+        self.func().gen_wasm_const(PTR, *str_offset as i64);
+        self.func().gen_wasm_const(I32, self.info.string_table[str_idx].len() as i64);
         self.func().gen_wasm_call(&self.ligetron.print_str);
     }
 
     /// Generates logging of value located on stack
     pub fn log_val(&mut self) {
-        self.func().gen_comment("logging value");
+        self.func().gen_wasm_comment("logging value");
 
         // loading value located on top of Circom logical stack on WASM stack
         let val = self.func().get_frame().top(0);
         self.func().get_frame().gen_wasm_stack_load(val);
 
         // loading size of FR value on WASM stack
-        self.func().gen_const(I32, (self.info.size_32_bit * 4) as i64);
+        self.func().gen_wasm_const(I32, (self.info.size_32_bit * 4) as i64);
+
+        println!("DUMP!");
+        self.func().debug_dump_state();
+        println!("DUMP END!");
 
         // generating call to Ligetron dump_memory function
         self.func().gen_wasm_call(&self.ligetron.dump_memory);
