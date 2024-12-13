@@ -4,7 +4,6 @@ use super::stack::CircomLocalVariableRef;
 use super::stack::CircomParameterRef;
 use super::stack::CircomReturnValueRef;
 use super::types::*;
-use super::value::*;
 use super::wasm::*;
 use super::FRContext;
 use super::LigetronProducerInfo;
@@ -290,13 +289,13 @@ impl Template {
         let sig = &self.signals[sig.idx];
         match sig {
             Signal::Input(par) => {
-                self.func().load_param_ref(par);
+                self.func().load_ref(par);
             }
             Signal::Output(ret_val) => {
-                self.func().load_ret_val_ref(ret_val);
+                self.func().load_ref(ret_val);
             }
             Signal::Intermediate(loc_var) => {
-                self.func().load_local_var_ref(loc_var);
+                self.func().load_ref(loc_var);
             }
         }
     }
@@ -306,13 +305,13 @@ impl Template {
         let sig = &self.signals[sig.idx];
         match sig {
             Signal::Input(par) => {
-                self.func().load_param_array_ref(par, offset, size);
+                self.func().load_array_slice_ref(par, offset, size);
             }
             Signal::Output(ret_val) => {
-                self.func().load_ret_val_array_ref(ret_val, offset, size);
+                self.func().load_array_slice_ref(ret_val, offset, size);
             }
             Signal::Intermediate(loc_var) => {
-                self.func().load_local_var_subarray_ref(loc_var, offset, size);
+                self.func().load_array_slice_ref(loc_var, offset, size);
             }
         }
     }
@@ -430,12 +429,10 @@ impl Template {
             if curr_idx + sig_size > circom_sig_idx {
                 if curr_idx == circom_sig_idx && size == sig_size {
                     // reference to signal itself
-                    self.func().load_local_var_ref(&sig_var);
+                    self.func().load_ref(sig_var);
                 } else {
                     // reference to subarray inside array signal
-                    self.func().load_local_var_subarray_ref(&sig_var,
-                                                         circom_sig_idx - curr_idx,
-                                                         size);
+                    self.func().load_array_slice_ref(sig_var, circom_sig_idx - curr_idx, size);
                 }
 
                 break;
@@ -474,7 +471,7 @@ impl Template {
         for sig in &comp.signals {
             match sig {
                 SubcomponentSignal::Output(var) => {
-                    self.func().load_local_var_ref(var);
+                    self.func().load_ref(var);
                 }
                 _ => {}
             }
@@ -484,7 +481,7 @@ impl Template {
         for sig in &comp.signals {
             match sig {
                 SubcomponentSignal::Input(var) => {
-                    self.func().load_local_var_ref(var);
+                    self.func().load_ref(var);
                 }
                 _ => {}
             }

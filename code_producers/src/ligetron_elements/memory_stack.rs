@@ -68,7 +68,7 @@ impl MemoryStackValue {
         };
     }
 
-    /// Dumps memory value to string
+    /// Dumps memory stack value to string
     fn dump(&self, dump_idx: bool) -> String {
         let idx_str = if dump_idx {
             format!("#{:<3}\t", self.idx)
@@ -76,6 +76,11 @@ impl MemoryStackValue {
             "".to_string()
         };
         return format!("{}offset=+{}\tsize={}", idx_str, self.offset, self.size);
+    }
+
+    /// Dumpes reference to memory stack value to string
+    fn dump_ref(&self) -> String {
+        return format!("#{}", self.idx);
     }
 }
 
@@ -107,6 +112,11 @@ impl MemoryStackValueRef {
     /// Returns value size
     pub fn size(&self) -> usize {
         return self.value_rc.borrow().size;
+    }
+
+    /// Dumps memoru value reference to string
+    pub fn dump_ref(&self) -> String {
+        return self.value_rc.borrow().dump_ref();
     }
 
     /// Dumps memory value to string

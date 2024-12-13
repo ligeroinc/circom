@@ -7,10 +7,9 @@ mod memory_stack;
 mod stack;
 mod template;
 mod types;
-mod value;
 mod wasm;
 
-use serde_json::Value;
+use stack::TemporaryStackValueRef;
 pub use template::SignalKind;
 pub use template::SignalInfo;
 
@@ -19,8 +18,8 @@ use func::*;
 use ligetron::*;
 use log::*;
 use template::*;
+use stack::*;
 use types::*;
-use value::*;
 use wasm::*;
 
 pub use template::TemplateInfo;
@@ -161,9 +160,7 @@ impl LigetronProducer {
     /// Loads u32 constant with specified value to stack
     pub fn load_const_u32(&mut self, val: usize) {
         self.func().load_const(WASMType::I64, val as i64);
-        self.debug_dump_state("AAAAAA");
         self.func().gen_call(&self.fr.raw_copy);
-        println!("BBBB");
     }
 
 
@@ -178,16 +175,16 @@ impl LigetronProducer {
         if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
-            self.func().load_local_var_array_element_ref(&circom_locals, var_idx);
+            self.func().load_array_element_ref(&circom_locals, var_idx);
         } else {
             if var_idx < self.func().params_count() {
                 // loading function parameter
                 let par = self.func().param(var_idx);
-                self.func().load_param_ref(&par);
+                self.func().load_ref(&par);
             } else {
                 // loading local variable
                 let real_var_idx = var_idx - self.func().params_count();
-                self.func().load_local_var_array_element_ref(&circom_locals, real_var_idx);
+                self.func().load_array_element_ref(&circom_locals, real_var_idx);
             }
         }
 
@@ -200,22 +197,21 @@ impl LigetronProducer {
         if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
-            self.func().load_local_var_subarray_ref(&circom_locals, start_var_idx, size);
+            self.func().load_array_slice_ref(&circom_locals, start_var_idx, size);
         } else {
             if start_var_idx < self.func().params_count() {
                 panic!("Parater arrays are not supported");
             } else {
                 // loading local variable
                 let real_var_idx = start_var_idx - self.func().params_count();
-                self.func().load_local_var_subarray_ref(&circom_locals, real_var_idx, size);
+                self.func().load_array_slice_ref(&circom_locals, real_var_idx, size);
             }
         }
     }
 
     /// Loads reference to return value on stack
     pub fn load_ret_val_ref(&mut self) {
-        let ret_val = self.func().ret_val(0);
-        self.func().load_ret_val_ref(&ret_val);
+        self.func().load_ref(&self.func().ret_val(0));
     }
 
 
@@ -669,21 +665,21 @@ impl LigetronProducer {
 
         // allocating FR array for results
         self.func().gen_wasm_comment("allocating Fr array for main component results");
-        let ret_vals = self.func().alloc_stack_n(main_comp_func.tp().ret_types());
+        let ret_vals = self.func().alloc_temp_n(main_comp_func.tp().ret_types());
 
         self.debug_dump_state("AFTER ENTRY RESULTS");
 
         // creating FR values from program arguments with Fr_rawCopyS2L function
 
         self.func().gen_wasm_comment("creating Fr array for porgram arguments");
-        let fr_args = self.func().alloc_stack_n(main_comp_func.tp().params());
+        let fr_args = self.func().alloc_temp_n(main_comp_func.tp().params());
 
         let mut arg_idx = 0;
         for (fr_arg_idx, par_type) in main_comp_func.tp().params().iter().enumerate() {
             match par_type {
                 CircomValueType::FRArray(size) => {
                     for i in 0 .. *size {
-                        self.func().load_stack_array_element_ref(&fr_args[fr_arg_idx], i);
+                        self.func().load_array_element_ref(&fr_args[fr_arg_idx], i);
                         self.func().load_wasm_local(&args[arg_idx]);
                         self.func().gen_call(&self.fr.raw_copy);
                         self.func().drop(1);
@@ -691,7 +687,7 @@ impl LigetronProducer {
                     }
                 }
                 CircomValueType::FR => {
-                    self.func().load_stack_ref(&fr_args[fr_arg_idx]);
+                    self.func().load_ref(&fr_args[fr_arg_idx]);
                     self.func().load_wasm_local(&args[arg_idx]);
                     self.func().gen_call(&self.fr.raw_copy);
                     self.func().drop(1);
@@ -727,11 +723,6 @@ impl LigetronProducer {
 
     ////////////////////////////////////////////////////////////
     // Fr code generation
-
-    /// Returns reference to return value
-    pub fn ret_val(&mut self) -> CircomValueRef {
-        return self.func().circom_ret_val(0);
-    }
 
     /// Generates saving Circom value located on top of stack to location specified
     /// in the second stack value
@@ -944,10 +935,6 @@ impl LigetronProducer {
 
         // loading size of FR value on WASM stack
         self.func().gen_wasm_const(I32, (self.info.size_32_bit * 4) as i64);
-
-        println!("DUMP!");
-        self.func().debug_dump_state();
-        println!("DUMP END!");
 
         // generating call to Ligetron dump_memory function
         self.func().gen_wasm_call(&self.ligetron.dump_memory);
