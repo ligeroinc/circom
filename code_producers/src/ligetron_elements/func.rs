@@ -35,6 +35,9 @@ pub struct CircomFunction {
     /// Reference to local variable containing array of FR values for all Circom
     /// local variables
     circom_locals_: CircomLocalVariableRef,
+
+    /// Should constant values be generated as address values instead of FR values
+    const_addr_mode: bool,
 }
 
 impl CircomFunction {
@@ -78,7 +81,8 @@ impl CircomFunction {
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
             frame: frame,
-            circom_locals_: circom_locals
+            circom_locals_: circom_locals,
+            const_addr_mode: false
         };
     }
 
@@ -117,14 +121,31 @@ impl CircomFunction {
         return self.func.borrow_mut().generate();
     }
 
+    /// Sets constant address mode flag. Returns previous flag value.
+    pub fn set_const_addr_mode(&mut self, val: bool) -> bool {
+        let res = self.const_addr_mode;
+        self.const_addr_mode = val;
+        return res;
+    }
+
     /// Loads memory value at const address on sack
     pub fn load_mem_const(&mut self, tp: CircomValueType, addr: usize) {
-        self.frame.push_mem_const(tp, addr);
+        self.frame.load_mem_const(tp, addr);
     }
 
     /// Loads WASM constant value on stack
     pub fn load_const(&mut self, tp: WASMType, val: i64) {
         self.frame.load_const(tp, val);
+    }
+
+    /// Loads U32 constant value on stack
+    pub fn load_const_u32(&mut self, val: usize) {
+        if self.const_addr_mode {
+            self.load_const_index(val as i32);
+        } else {
+            self.load_const(WASMType::I64, val as i64);
+            self.gen_call(&self.fr.raw_copy.clone());
+        }
     }
 
 
@@ -214,16 +235,47 @@ impl CircomFunction {
     }
 
     /// Loads reference to subarray of array to stack
-    pub fn load_array_slice_ref<T: ConvertibleToValueRef>(&mut self,
-                                                          arr: &T,
-                                                          offset: usize,
-                                                          size: usize) {
-        self.frame.load_array_slice_ref(arr, offset, size);
+    pub fn load_array_slice_ref<T: ConvertibleToValueRef>(&mut self, arr: &T, size: usize) {
+        self.frame.load_array_slice_ref(arr, size);
     }
 
-    /// Loads reference to element of array to stack
-    pub fn load_array_element_ref<T: ConvertibleToValueRef>(&mut self, arr: &T, offset: usize) {
-        self.frame.load_array_element_ref(arr, offset);
+    /// Loads reference to element of array to stack using top stack address value as offset
+    pub fn load_array_element_ref<T: ConvertibleToValueRef>(&mut self, arr: &T) {
+        self.frame.load_array_element_ref(arr);
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    /// Addresses and indexes
+
+    /// Loads const address on stack
+    pub fn load_const_index(&mut self, idx: i32) {
+        self.frame.load_const_index(idx);
+    }
+
+    /// Converts current stack top value to address. The top of stack must be a WASM PTR value
+    pub fn convert_index(&mut self) {
+        self.frame.convert_index();
+    }
+
+    /// Generates address add operation
+    pub fn index_add(&mut self) {
+        self.frame.index_add();
+    }
+
+    /// Generates address mul operation
+    pub fn index_mul(&mut self) {
+        self.frame.index_mul();
+    }
+
+    /// Returns true if index located on top of stack is const index
+    pub fn top_index_is_const(&self) -> bool {
+        return self.frame.top_index_is_const();
+    }
+
+    /// Returns constant offset in index located on top of stack
+    pub fn top_index_offset(&self) -> i32 {
+        return self.frame.top_index_offset();
     }
 
 
@@ -261,10 +313,7 @@ impl CircomFunction {
 
     /// Generates call instruction
     pub fn gen_wasm_call(&mut self, func: &WASMFunctionRef) {
-        for par in func.tp().params().iter().rev() {
-            println!("POP: {}", par.to_string());
-            self.frame.pop_wasm_stack(par);
-        }
+        self.frame.pop(func.tp().params().len());
 
         self.func.borrow_mut().gen_call(func);
 
@@ -414,11 +463,6 @@ impl CircomFunction {
     ////////////////////////////////////////////////////////////
     // Stack manipulation
 
-    /// Allocates new value in memory stack frame. Returns reference to allocated value.
-    pub fn alloc_mem_stack(&mut self, types: &Vec<CircomValueType>) -> Vec<MemoryStackValueRef> {
-        return self.frame.alloc_mem_stack(types);
-    }
-
     /// Drops specified number of values located on top of stack
     pub fn drop(&mut self, count: usize) {
         self.frame.drop(count);
@@ -426,7 +470,7 @@ impl CircomFunction {
 
     /// Loads value stored in WASM local on top of stack
     pub fn load_wasm_local(&mut self, loc: &WASMLocalVariableRef) {
-        self.frame.push_wasm_local(loc);
+        self.frame.load_wasm_local(loc);
     }
 
 
@@ -435,8 +479,17 @@ impl CircomFunction {
 
     /// Allocates Fr value on stack for result of operation
     pub fn alloc_fr_result(&mut self) {
-        self.frame.alloc_mem_stack(&vec![CircomValueType::FR]);
+        let val = self.frame.alloc_temp(&CircomValueType::FR);
+
+        // loading refernce to allocated temporary stack value again to
+        // make sure it will be saved after removing during call operation
+        self.frame.load_ref(&val);
     }
+
+    // /// Reloads allocted on stack Fr value for result operation
+    // pub fn reload_fr_result(&mut self) {
+    //     self.frame.load_ref(&self.frame.top(0));
+    // }
 
     /// Generates Fr mul operation
     pub fn fr_mul(&mut self) {
@@ -590,44 +643,50 @@ impl CircomFunction {
             }
         }
 
-        if num_stack_vals != 0 {
-            let mut stack_idx = num_stack_vals - 1;
-            let mut wasm_stack_loaded = false;
+        // if num_stack_vals != 0 {
+        //     let mut stack_idx = num_stack_vals - 1;
+        //     let mut wasm_stack_loaded = false;
 
-            // loading pointers to FR return values to WASM stack
-            for _ in func_ref.tp().ret_types().iter().filter(|t| t.is_fr()) {
-                let stack_val = self.frame.top(stack_idx);
-                let stack_val_type = self.frame.value_type(&stack_val);
-                if !stack_val_type.is_fr() {
-                    panic!("Function call return types mismatch");
-                }
+        //     // loading pointers to FR return values to WASM stack
+        //     for _ in func_ref.tp().ret_types().iter().filter(|t| t.is_fr()) {
+        //         let stack_val = self.frame.top(stack_idx);
+        //         let stack_val_type = self.frame.value_type(&stack_val);
+        //         if !stack_val_type.is_fr() {
+        //             panic!("Function call return types mismatch");
+        //         }
 
-                self.frame.gen_wasm_stack_load_no_push(stack_val);
-                assert!(stack_idx > 0);
-                stack_idx -= 1;
-                wasm_stack_loaded = true;
-            }
+        //         // return value address may be already in WASM stack
+        //         if !stack_val.is_wasm_stack() {
+        //             self.frame.gen_wasm_stack_load_no_push(stack_val);
+        //             wasm_stack_loaded = true;
+        //         }
 
-            // loading parameters to WASM stack
-            for _ in func_ref.tp().params() {
-                let stack_val = self.frame.top(stack_idx);
-                if stack_val.is_wasm_stack() {
-                    if wasm_stack_loaded {
-                        // we can't (and don't want to) duplicate values located in WASM stack
-                        panic!("Duplicating WASM stack values is not supported");
-                    }
-                } else {
-                    self.frame.gen_wasm_stack_load_no_push(stack_val);
-                }
-                stack_idx -= 1;
-            }
-        }
+        //         assert!(stack_idx > 0);
+        //         stack_idx -= 1;
+        //     }
+
+        //     // loading parameters to WASM stack
+        //     for _ in func_ref.tp().params() {
+        //         let stack_val = self.frame.top(stack_idx);
+        //         if stack_val.is_wasm_stack() {
+        //             if wasm_stack_loaded {
+        //                 // we can't (and don't want to) duplicate values located in WASM stack
+        //                 panic!("Duplicating WASM stack values is not supported");
+        //             }
+        //         } else {
+        //             self.frame.gen_wasm_stack_load_no_push(stack_val);
+        //         }
+        //         stack_idx -= 1;
+        //     }
+        // }
 
         // Generating call instruction
         self.func.borrow_mut().gen_call(&func_ref.to_wasm());
 
         // removing parameter values from stack
-        self.frame.pop(func_ref.tp().params().len());
+        self.frame.pop(num_stack_vals);
+
+        self.debug_dump_state();
 
         // adding WASM return values to stack
         for ret_type in func_ref.tp().ret_types() {

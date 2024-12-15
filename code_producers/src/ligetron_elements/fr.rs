@@ -8,6 +8,7 @@ use super::wasm::*;
 pub struct FRContext {
     pub raw_copy: CircomFunctionRef,
     pub is_true: CircomFunctionRef,
+    pub to_int: CircomFunctionRef,
 
     pub copy: CircomFunctionRef,
     pub copyn: CircomFunctionRef,
@@ -50,6 +51,12 @@ impl FRContext {
         );
         let fr_is_true = CircomFunctionRef::new("Fr_isTrue".to_string(), fr_is_true_type);
 
+        let fr_to_int_type = CircomFunctionType::new(
+            vec![CircomValueType::FR],
+            vec![CircomValueType::WASM(WASMType::I32)]
+        );
+        let fr_to_int = CircomFunctionRef::new("Fr_toInt".to_string(), fr_to_int_type);
+
         let copyn_type = CircomFunctionType::new(
             vec![CircomValueType::FR, CircomValueType::WASM(WASMType::I32)],
             vec![CircomValueType::FR]
@@ -59,6 +66,7 @@ impl FRContext {
         return FRContext {
             raw_copy: fr_raw_copy,
             is_true: fr_is_true,
+            to_int: fr_to_int,
 
             copy: Self::create_fr_func_ref("Fr_copy", 1, 1),
             copyn: copyn,

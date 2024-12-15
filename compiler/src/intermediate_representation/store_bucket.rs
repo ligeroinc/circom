@@ -472,37 +472,20 @@ impl GenerateLigetron for StoreBucket {
                                    &self.dest_address_type,
                                    &self.context.size);
 
+        producer.debug_dump_state("store bucket after load dest ref");
+
         // generating source value
         self.src.as_ref().generate_ligetron(producer);
 
         // generating store
         producer.store_n(store_size);
 
-        // discarding store result
-        producer.drop();
-
         // generating component run code if storing in subcomponent signals
         match &self.dest_address_type {
             AddressType::SubcmpSignal { cmp_address, .. } => {
                 match cmp_address.as_ref() {
                     Instruction::Value(cmp_idx_val) => {
-                        // extracting signal number from location instruction
-                        match &self.dest {
-                            LocationRule::Indexed { location, .. } => {
-                                match location.as_ref() {
-                                    Instruction::Value(_sig_idx) => {
-                                        producer.gen_subcmp_run(cmp_idx_val.value, store_size);
-                                    },
-                                    _ => {
-                                        panic!("indexed signal load location is not a constant value");
-                                    }
-        
-                                }
-                            },
-                            LocationRule::Mapped { .. } => {
-                                panic!("NYI");
-                            }
-                        }
+                        producer.gen_subcmp_run(cmp_idx_val.value, store_size);
                     },
                     _ => { panic!("subcomponent address is not a constant value"); }
 

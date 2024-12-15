@@ -299,13 +299,29 @@ impl GenerateLigetron for ComputeBucket {
         producer.debug_dump_state("before compute bucket");
         producer.gen_comment("before compute bucket");
 
-        // allocating stack value for operation result
-        producer.alloc_fr_result();
+        let is_addr = match self.op {
+            OperatorType::AddAddress => true,
+            OperatorType::MulAddress => true,
+            OperatorType::ToAddress => true,
+            _ => false
+        };
+
+        // setting I32 constant mode for address arithmetic
+        let const_mode_i32 = if is_addr { true } else { false };
+        let prev_const_mode = producer.set_const_addr_mode(const_mode_i32);
+
+        // allocating stack value for operation result except for address arithmetic
+        if !is_addr {
+            producer.alloc_fr_result();
+        }
 
         // generating code for calculating operation arguments
         for inst in &self.stack {
             inst.generate_ligetron(producer);
         }
+
+        // restoring previous constant mode
+        producer.set_const_addr_mode(prev_const_mode);
 
         // generating operation
         match self.op {
@@ -337,15 +353,9 @@ impl GenerateLigetron for ComputeBucket {
             OperatorType::PrefixSub =>  { producer.fr_neg();  }
             OperatorType::BoolNot =>    { producer.fr_lnot(); }
             OperatorType::Complement => { producer.fr_bnot(); }
-            OperatorType::ToAddress => {
-                panic!("NYI");
-            }
-            OperatorType::MulAddress => {
-                panic!("NYI");
-            }
-            OperatorType::AddAddress => {
-                panic!("NYI");
-            }
+            OperatorType::ToAddress =>  { producer.to_address(); }
+            OperatorType::MulAddress => { producer.addr_mul(); }
+            OperatorType::AddAddress => { producer.addr_add(); }
         }
 
         producer.gen_comment("after compute bucket");

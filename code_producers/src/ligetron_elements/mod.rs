@@ -31,6 +31,7 @@ use super::wasm_elements::wasm_code_generator::fr_code;
 use WASMType::*;
 
 use num_bigint_dig::BigInt;
+use std::borrow::Borrow;
 use std::rc::Rc;
 use std::cell::{RefCell, Ref, RefMut};
 use std::collections::HashMap;
@@ -159,8 +160,12 @@ impl LigetronProducer {
 
     /// Loads u32 constant with specified value to stack
     pub fn load_const_u32(&mut self, val: usize) {
-        self.func().load_const(WASMType::I64, val as i64);
-        self.func().gen_call(&self.fr.raw_copy);
+        self.func().load_const_u32(val);
+    }
+
+    /// Sets constant address mode flag. Returns previous flag value.
+    pub fn set_const_addr_mode(&mut self, val: bool) -> bool {
+        return self.func().set_const_addr_mode(val);
     }
 
 
@@ -168,50 +173,69 @@ impl LigetronProducer {
     // Local variables, parameters and return values
 
     /// Loads reference to local variable or parameter on stack
-    pub fn load_local_var_ref(&mut self, var_idx: usize) {
+    pub fn load_local_var_ref(&mut self) {
         let circom_locals = self.func().circom_locals();
 
         // calculating real offset of variable in array of all circom variables
         if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
-            self.func().load_array_element_ref(&circom_locals, var_idx);
+            self.func().load_array_element_ref(&circom_locals);
         } else {
-            if var_idx < self.func().params_count() {
-                // loading function parameter
-                let par = self.func().param(var_idx);
+            let params_count = self.func().params_count();
+            let offset = self.func().top_index_offset();
+
+            if (offset as usize) < params_count {
+                // loading parmaeter
+                if !self.func().top_index_is_const() {
+                    panic!("can't load parameter with not const index");
+                }
+
+                let par = self.func().param(offset as usize);
+                self.func().drop(1);
                 self.func().load_ref(&par);
             } else {
+                // Decreasing address by number of parameters. That should be done
+                // in compile time in the stack manipulation logic.
+                self.func().load_const_index(-1 * (params_count as i32));
+                self.func().index_add();
+
                 // loading local variable
-                let real_var_idx = var_idx - self.func().params_count();
-                self.func().load_array_element_ref(&circom_locals, real_var_idx);
+                self.func().load_array_element_ref(&circom_locals);
             }
         }
-
     }
 
     /// Loads reference to array of local variables or parameter on stack
-    pub fn load_local_var_array_ref(&mut self, start_var_idx: usize, size: usize) {
+    pub fn load_local_var_array_ref(&mut self, size: usize) {
         let circom_locals = self.func().circom_locals();
 
         if self.template_.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
-            self.func().load_array_slice_ref(&circom_locals, start_var_idx, size);
+            self.func().load_array_slice_ref(&circom_locals, size);
         } else {
-            if start_var_idx < self.func().params_count() {
-                panic!("Parater arrays are not supported");
+            let params_count = self.func().params_count();
+            let offset = self.func().top_index_offset();
+
+            if (offset as usize) < params_count {
+                panic!("parameter arrays are not supported");
             } else {
-                // loading local variable
-                let real_var_idx = start_var_idx - self.func().params_count();
-                self.func().load_array_slice_ref(&circom_locals, real_var_idx, size);
+                // Decreasing address by number of parameters. That should be done
+                // in compile time in the stack manipulation logic.
+                self.func().load_const_index(-1 * (params_count as i32));
+                self.func().index_add();
+
+                // loading local variable array slice
+                self.func().load_array_slice_ref(&circom_locals, size);
             }
         }
     }
 
     /// Loads reference to return value on stack
     pub fn load_ret_val_ref(&mut self) {
-        self.func().load_ref(&self.func().ret_val(0));
+        let rv = self.func().ret_val(0);
+        self.func().load_ref(&rv);
     }
 
 
@@ -322,24 +346,22 @@ impl LigetronProducer {
         self.template_ = None;
     }
 
-    /// Loads reference to signal with specified index on stack
-    pub fn load_signal_ref(&mut self, circom_sig_idx: usize, size: usize) {
+    /// Loads reference to signal on stack
+    pub fn load_signal_ref(&mut self, size: usize) {
+        let circom_signal_offset = self.func().top_index_offset() as usize;
+
         let mut curr_idx: usize = 0;
         let mut real_sig_idx: usize = 0;
         loop {
             let sig = self.template().signal(real_sig_idx);
             let sig_size = self.template().signal_size(&sig);
 
-            if curr_idx + sig_size > circom_sig_idx {
-                if curr_idx == circom_sig_idx && size == sig_size {
-                    // reference to signal
-                    self.template_mut().load_signal_ref(&sig);
-                } else {
-                    // reference to subarray inside array signal
-                    self.template_mut().load_signal_array_ref(&sig,
-                                                                  circom_sig_idx - curr_idx,
-                                                                  size);
-                }
+            if curr_idx + sig_size > circom_signal_offset {
+                // Substracting offset located on top of stack.
+                // This should be done in compile time inside stack logic.
+                self.func().load_const_index((curr_idx as i32) * -1);
+                self.func().index_add();
+                self.template_mut().load_signal_ref(&sig, size);
 
                 break;
             }
@@ -357,11 +379,8 @@ impl LigetronProducer {
     }
 
     /// Loads reference to subcomponent signal
-    pub fn load_subcmp_signal_ref(&mut self,
-                                  subcmp_idx: usize,
-                                  circom_sig_idx: usize,
-                                  size: usize) {
-        self.template_mut().load_subcmp_signal_ref(subcmp_idx, circom_sig_idx, size);
+    pub fn load_subcmp_signal_ref(&mut self, subcmp_idx: usize, size: usize) {
+        self.template_mut().load_subcmp_signal_ref(subcmp_idx, size);
     }
 
     /// Generates code for running subcomponent after store to signal
@@ -679,18 +698,21 @@ impl LigetronProducer {
             match par_type {
                 CircomValueType::FRArray(size) => {
                     for i in 0 .. *size {
-                        self.func().load_array_element_ref(&fr_args[fr_arg_idx], i);
+                        self.func().load_const_index(i as i32);
+                        self.func().load_array_element_ref(&fr_args[fr_arg_idx]);
                         self.func().load_wasm_local(&args[arg_idx]);
                         self.func().gen_call(&self.fr.raw_copy);
-                        self.func().drop(1);
                         arg_idx += 1;
                     }
                 }
                 CircomValueType::FR => {
                     self.func().load_ref(&fr_args[fr_arg_idx]);
                     self.func().load_wasm_local(&args[arg_idx]);
+
+                    self.debug_dump_state("BEFORE raw copy");
                     self.func().gen_call(&self.fr.raw_copy);
-                    self.func().drop(1);
+                    self.debug_dump_state("AFTER raw copy");
+
                     arg_idx += 1;
                 }
                 CircomValueType::WASM(..) => {
@@ -704,7 +726,6 @@ impl LigetronProducer {
         // executing main component
         self.func().gen_wasm_comment("executing main component");
         self.func().gen_call(&self.main_comp_run_function());
-        self.func().drop(ret_vals.len());
 
         // calling exit function at the end of entry function
         // TODO: pass correct exit code?
@@ -745,6 +766,11 @@ impl LigetronProducer {
     pub fn alloc_fr_result(&mut self) {
         self.func().alloc_fr_result();
     }
+
+    /// Reloads allocted on stack Fr value for result operation
+    // pub fn reload_fr_result(&mut self) {
+    //     self.func().reload_fr_result();
+    // }
 
     /// Generates Fr mul operation
     pub fn fr_mul(&mut self) {
@@ -875,6 +901,33 @@ impl LigetronProducer {
         self.func().gen_call(&func);
     }
 
+
+    ////////////////////////////////////////////////////////////
+    // Addresses
+
+    /// Generates conversion of stack top value to address
+    pub fn to_address(&mut self) {
+        // converting value to address with Fr_toInt function
+        self.func().gen_call(&self.fr.to_int);
+
+        // converting WASM I32 value to address
+        self.func().convert_index();
+    }
+
+    /// Generates address add operation
+    pub fn addr_add(&mut self) {
+        self.func().index_add();
+    }
+
+    /// Generates address mul opearation
+    pub fn addr_mul(&mut self) {
+        self.func().index_mul();
+    }
+
+
+    ////////////////////////////////////////////////////////////
+    // Branch operations
+
     /// Starts generating if-else block using current stack value as condition
     pub fn gen_if(&mut self) {
         self.func().gen_call(&self.fr.is_true);
@@ -931,16 +984,15 @@ impl LigetronProducer {
 
         // loading value located on top of Circom logical stack on WASM stack
         let val = self.func().get_frame().top(0);
-        self.func().get_frame().gen_wasm_stack_load(val);
+        //self.func().get_frame().gen_wasm_stack_load(val);
 
         // loading size of FR value on WASM stack
         self.func().gen_wasm_const(I32, (self.info.size_32_bit * 4) as i64);
 
         // generating call to Ligetron dump_memory function
+        self.debug_dump_state("BEFORE dump_memory");
         self.func().gen_wasm_call(&self.ligetron.dump_memory);
-
-        // removing value located on top of stack
-        self.func().drop(1);
+        self.debug_dump_state("AFTER dump_memory");
     }
 
 

@@ -1,3 +1,5 @@
+use crate::translating_traits::GenerateLigetron;
+
 use super::ir_interface::*;
 use code_producers::ligetron_elements::*;
 
@@ -64,44 +66,28 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
 
     match &loc {
         LocationRule::Indexed { location, .. } => {
+            // generating code for calculating value index
+            let old_const_mode = producer.set_const_addr_mode(true);
+            location.generate_ligetron(producer);
+            producer.set_const_addr_mode(old_const_mode);
+
             match &addr_t {
                 AddressType::Variable => {
-                    // extracting variable number from location instruction
-                    match location.as_ref() {
-                        Instruction::Value(value) => {
-                            if sz == 1 {
-                                producer.load_local_var_ref(value.value);
-                            } else {
-                                producer.load_local_var_array_ref(value.value, sz);
-                            }
-                        },
-                        _ => { panic!("indexed variable load location is not a constant value"); }
+                    // loading value reference
+                    if sz == 1 {
+                        producer.load_local_var_ref();
+                    } else {
+                        producer.load_local_var_array_ref(sz);
                     }
                 }
                 AddressType::Signal => {
-                    // extracting signal number from location instruction
-                    match location.as_ref() {
-                        Instruction::Value(value) => {
-                            producer.load_signal_ref(value.value, sz);
-                        },
-                        _ => { panic!("indexed signal load location is not a constant value"); }
-                    }
+                    producer.load_signal_ref(sz);
                 }
                 AddressType::SubcmpSignal { cmp_address, .. } => {
                     // extracting subcomponent index from component address
                     match cmp_address.as_ref() {
                         Instruction::Value(cmp_idx_val) => {
-                            // extracting signal number from location instruction
-                            match location.as_ref() {
-                                Instruction::Value(sig_idx) => {
-                                    producer.load_subcmp_signal_ref(cmp_idx_val.value,
-                                                                    sig_idx.value,
-                                                                    sz);
-                                },
-                                _ => {
-                                    panic!("indexed signal load location is not a constant value");
-                                }
-                            }
+                            producer.load_subcmp_signal_ref(cmp_idx_val.value, sz);
                         },
                         _ => { panic!("subcomponent address is not a constant value"); }
                     };

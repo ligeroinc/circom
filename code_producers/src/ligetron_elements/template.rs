@@ -5,6 +5,7 @@ use super::stack::CircomParameterRef;
 use super::stack::CircomReturnValueRef;
 use super::types::*;
 use super::wasm::*;
+use super::ConvertibleToValueRef;
 use super::FRContext;
 use super::LigetronProducerInfo;
 
@@ -284,34 +285,49 @@ impl Template {
         };
     }
 
-    /// Loads reference to signal on stack
-    pub fn load_signal_ref(&mut self, sig: &SignalRef) {
+    /// Loads reference to signal on stack using offset located on top of stack
+    /// and constant offset passed as parameter
+    pub fn load_signal_ref(&mut self, sig: &SignalRef, size: usize) {
         let sig = &self.signals[sig.idx];
-        match sig {
-            Signal::Input(par) => {
-                self.func().load_ref(par);
-            }
-            Signal::Output(ret_val) => {
-                self.func().load_ref(ret_val);
-            }
-            Signal::Intermediate(loc_var) => {
-                self.func().load_ref(loc_var);
-            }
-        }
-    }
 
-    /// Loads reference to signal array on stack
-    pub fn load_signal_array_ref(&mut self, sig: &SignalRef, offset: usize, size: usize) {
-        let sig = &self.signals[sig.idx];
-        match sig {
-            Signal::Input(par) => {
-                self.func().load_array_slice_ref(par, offset, size);
+        if size == 1 {
+            if self.func().top_index_is_const() && self.func().top_index_offset() == 0 {
+                self.func().drop(1);
+                match sig {
+                    Signal::Input(par) => {
+                        self.func().load_ref(par);
+                    }
+                    Signal::Output(ret_val) => {
+                        self.func().load_ref(ret_val);
+                    }
+                    Signal::Intermediate(loc_var) => {
+                        self.func().load_ref(loc_var);
+                    }
+                }
+            } else {
+                match sig {
+                    Signal::Input(par) => {
+                        self.func().load_array_element_ref(par);
+                    }
+                    Signal::Output(ret_val) => {
+                        self.func().load_array_element_ref(ret_val);
+                    }
+                    Signal::Intermediate(loc_var) => {
+                        self.func().load_array_element_ref(loc_var);
+                    }
+                }
             }
-            Signal::Output(ret_val) => {
-                self.func().load_array_slice_ref(ret_val, offset, size);
-            }
-            Signal::Intermediate(loc_var) => {
-                self.func().load_array_slice_ref(loc_var, offset, size);
+        } else {
+            match sig {
+                Signal::Input(par) => {
+                    self.func().load_array_slice_ref(par, size);
+                }
+                Signal::Output(ret_val) => {
+                    self.func().load_array_slice_ref(ret_val, size);
+                }
+                Signal::Intermediate(loc_var) => {
+                    self.func().load_array_slice_ref(loc_var, size);
+                }
             }
         }
     }
@@ -392,11 +408,10 @@ impl Template {
     }
 
     /// Loads reference to subcomponent signal
-    pub fn load_subcmp_signal_ref(&mut self,
-                                  subcmp_idx: usize,
-                                  circom_sig_idx: usize,
-                                  size: usize) {
+    pub fn load_subcmp_signal_ref(&mut self, subcmp_idx: usize, size: usize) {
         let comp = &self.subcomponents[subcmp_idx];
+
+        let circom_signal_offset = self.func().top_index_offset() as usize;
 
         let mut curr_idx: usize = 0;
         let mut real_sig_idx: usize = 0;
@@ -406,7 +421,7 @@ impl Template {
             match &sig {
                 SubcomponentSignal::Intermediate(sz) => {
                     // can't access intermediate signals of subcomponent
-                    assert!(circom_sig_idx >= curr_idx + sz);
+                    assert!(circom_signal_offset >= curr_idx + sz);
                     curr_idx += sz;
                     continue;
                 }
@@ -426,13 +441,21 @@ impl Template {
                 _ => { panic!("WASM types are not allowed for signals"); }
             };
 
-            if curr_idx + sig_size > circom_sig_idx {
-                if curr_idx == circom_sig_idx && size == sig_size {
-                    // reference to signal itself
-                    self.func().load_ref(sig_var);
+            if curr_idx + sig_size > circom_signal_offset {
+                // Substracting offset located on top of stack.
+                // This should be done in compile time inside stack logic.
+                self.func().load_const_index((curr_idx as i32) * -1);
+                self.func().index_add();
+
+                if size == 1 {
+                    if self.func().top_index_is_const() && self.func().top_index_offset() == 0 {
+                        self.func().drop(1);
+                        self.func().load_ref(sig_var);
+                    } else {
+                        self.func().load_array_element_ref(sig_var);
+                    }
                 } else {
-                    // reference to subarray inside array signal
-                    self.func().load_array_slice_ref(sig_var, circom_sig_idx - curr_idx, size);
+                    self.func().load_array_slice_ref(sig_var, size);
                 }
 
                 break;
@@ -489,10 +512,6 @@ impl Template {
 
         // calling template run function
         self.func().gen_call(&run_func);
-
-        // dropping results of template run function
-        let drop_count = run_func.tp().ret_types().iter().filter(|tp| tp.is_fr()).count();
-        self.func().drop(drop_count);
 
         self.func().gen_wasm_endif();
     }
