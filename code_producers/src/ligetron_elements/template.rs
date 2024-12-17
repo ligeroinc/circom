@@ -5,6 +5,7 @@ use super::stack::CircomParameterRef;
 use super::stack::CircomReturnValueRef;
 use super::types::*;
 use super::wasm::*;
+use super::CircomModule;
 use super::ConvertibleToValueRef;
 use super::FRContext;
 use super::LigetronProducerInfo;
@@ -170,9 +171,6 @@ impl Subcomponent {
 
 /// Type for generating code for a single template
 pub struct Template {
-    /// Parent WASM module
-    module: Rc<RefCell<WASMModule>>,
-
     /// Name of template being generated
     name_: String,
 
@@ -182,28 +180,20 @@ pub struct Template {
     /// Vector of subcomponents
     subcomponents: Vec<Subcomponent>,
 
-    /// Function generator for generating template run function
+    /// Underlying template run function
     func_: Rc<RefCell<CircomFunction>>
 }
 
 impl Template {
     /// Constructs new template generator
-    pub fn new(size_32_bit: usize,
-               fr: FRContext,
-               module: Rc<RefCell<WASMModule>>,
+    pub fn new(module: Rc<RefCell<CircomModule>>,
                name: String,
                sig_info: &Vec<SignalInfo>,
-               n_local_vars: usize,
-               stack_ptr: WASMGlobalVariableRef) -> Template {
+               n_local_vars: usize) -> Template {
 
         // creating function generator for template run function
         let func_name = format!("{}_template", &name);
-        let mut func = CircomFunction::new(size_32_bit,
-                                           fr,
-                                           module.clone(),
-                                           stack_ptr,
-                                           func_name,
-                                           n_local_vars);
+        let mut func = CircomFunction::new(module.clone(), func_name, n_local_vars);
 
         // processing template signals
         let mut signals = Vec::<Signal>::new();
@@ -237,7 +227,6 @@ impl Template {
         }
 
         let templ_gen = Template {
-            module: module,
             name_: name.clone(),
             signals: signals,
             subcomponents: Vec::new(),

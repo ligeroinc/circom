@@ -5,23 +5,18 @@ use super::memory_stack::*;
 use super::stack::*;
 use super::types::*;
 use super::wasm::*;
+use super::CircomModule;
 
 use std::rc::Rc;
-use std::cell::{RefCell, RefMut};
+use std::cell::{RefCell, Ref, RefMut};
 
 use WASMType::*;
 
 
 /// Represents current Circom function being generated
 pub struct CircomFunction {
-    /// Size of Circom variables, in 32bit
-    size_32_bit: usize,
-
-    /// FR context
-    fr: FRContext,
-
-    /// Reference to parent module
-    module: Rc<RefCell<WASMModule>>,
+    /// Reference to parent Circom module
+    module: Rc<RefCell<CircomModule>>,
 
     /// Reference to underlying WASM function for this Circom function
     func: Rc<RefCell<WASMFunction>>,
@@ -42,10 +37,7 @@ pub struct CircomFunction {
 
 impl CircomFunction {
     /// Constructs new function generator
-    pub fn new(size_32_bit: usize,
-               fr: FRContext,
-               module: Rc<RefCell<WASMModule>>,
-               stack_ptr: WASMGlobalVariableRef,
+    pub fn new(module: Rc<RefCell<CircomModule>>,
                name: String,
                n_local_vars: usize) -> CircomFunction {
 
@@ -56,17 +48,19 @@ impl CircomFunction {
         debug_log!("");
 
         // creating underlying WASM function
-        let func = WASMFunction::new(module.clone(), name);
+        let func = WASMFunction::new(module.borrow_mut().wasm_module_rc().clone(), name);
 
         // creating new memory stack frame for this funcion
-        let mem_frame = Rc::new(RefCell::new(MemoryStackFrame::new(module.clone(),
-                                                                   stack_ptr.clone(),
+        let mem_frame = Rc::new(RefCell::new(MemoryStackFrame::new(module.borrow().wasm_module_rc().clone(),
+                                                                   module.borrow().stack_ptr().clone(),
                                                                    func.inst_gen_rc().clone(),
                                                                    func.frame_rc().clone())));
 
         let func_rc = Rc::new(RefCell::new(func));
 
-        let mut frame = CircomStackFrame::new(size_32_bit, func_rc.clone(), mem_frame.clone());
+        let mut frame = CircomStackFrame::new(module.borrow().var_size_32_bit(),
+                                              func_rc.clone(),
+                                              mem_frame.clone());
 
         // Allocating array of variables for Circom local variables. This is required
         // because Circom compiler references all variables by index, and we can't detect
@@ -75,8 +69,6 @@ impl CircomFunction {
                                                 CircomValueType::FRArray(n_local_vars));
 
         return CircomFunction {
-            size_32_bit: size_32_bit,
-            fr: fr,
             module: module,
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
@@ -84,6 +76,11 @@ impl CircomFunction {
             circom_locals_: circom_locals,
             const_addr_mode: false
         };
+    }
+
+    /// Returns reference to parent Circom module
+    pub fn module_ref(&self) -> RefMut<CircomModule> {
+        return self.module.as_ref().borrow_mut();
     }
 
     /// Returns reference to memory stack frame
@@ -101,8 +98,9 @@ impl CircomFunction {
         self.func.borrow_mut().set_export_name(name);
     }
 
-    /// Generates function code as list of instructions. Makes this instance invalid
-    pub fn generate(&mut self, gen_func_entry_exit: bool) -> Vec<String> {
+    /// Generates function code as list of instructions and appends them into module.
+    /// Makes this instance invalid.
+    pub fn generate(&mut self, gen_func_entry_exit: bool) {
         debug_log!("");
         debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
         debug_log!("CIRCOM FUNCTION END: {}", self.func.borrow().name());
@@ -118,7 +116,8 @@ impl CircomFunction {
             self.mem_frame().gen_func_exit();
         }
 
-        return self.func.borrow_mut().generate();
+        self.module_ref().append_instruction(&mut vec![format!("")]);
+        self.module_ref().append_instruction(&mut self.func.borrow_mut().generate());
     }
 
     /// Sets constant address mode flag. Returns previous flag value.
@@ -144,7 +143,8 @@ impl CircomFunction {
             self.load_const_index(val as i32);
         } else {
             self.load_const(WASMType::I64, val as i64);
-            self.gen_call(&self.fr.raw_copy.clone());
+            let raw_copy = self.module_ref().fr().raw_copy.clone();
+            self.gen_call(&raw_copy);
         }
     }
 
@@ -340,7 +340,7 @@ impl CircomFunction {
 
     /// Generates getting value of a global
     pub fn gen_wasm_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
-        let (_, tp) = self.module.borrow().get_global_ref_and_type(var_ref);
+        let (_, tp) = self.module.borrow().wasm_module().get_global_ref_and_type(var_ref);
 
         self.func.borrow_mut().gen_global_get(var_ref);
         self.frame.push_wasm_stack(tp);
@@ -348,7 +348,7 @@ impl CircomFunction {
 
     /// Generates setting value of a global
     pub fn gen_wasm_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
-        let (_, tp) = self.module.borrow().get_global_ref_and_type(var_ref);
+        let (_, tp) = self.module.borrow().wasm_module().get_global_ref_and_type(var_ref);
 
         self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_global_set(var_ref);
@@ -493,124 +493,148 @@ impl CircomFunction {
 
     /// Generates Fr mul operation
     pub fn fr_mul(&mut self) {
-        self.gen_call(&self.fr.mul.clone());
+        let mul = self.module_ref().fr().mul.clone();
+        self.gen_call(&mul);
     }
 
     /// Generates Fr div operation
     pub fn fr_div(&mut self) {
-        self.gen_call(&self.fr.div.clone());
+        let div = self.module_ref().fr().div.clone();
+        self.gen_call(&div);
     }
 
     /// Generates Fr add operation
     pub fn fr_add(&mut self) {
-        self.gen_call(&self.fr.add.clone());
+        let add = self.module_ref().fr().add.clone();
+        self.gen_call(&add);
     }
 
     /// Generates Fr sub operation
     pub fn fr_sub(&mut self) {
-        self.gen_call(&self.fr.sub.clone());
+        let sub = self.module_ref().fr().sub.clone();
+        self.gen_call(&sub);
     }
 
     /// Generates Fr pow operation
     pub fn fr_pow(&mut self) {
-        self.gen_call(&self.fr.pow.clone());
+        let pow = self.module_ref().fr().pow.clone();
+        self.gen_call(&pow);
     }
 
     /// Generates Fr idiv operation
     pub fn fr_idiv(&mut self) {
-        self.gen_call(&self.fr.idiv.clone());
+        let idiv = self.module_ref().fr().idiv.clone();
+        self.gen_call(&idiv);
     }
 
     /// Generates Fr mod operation
     pub fn fr_mod(&mut self) {
-        self.gen_call(&self.fr.mod_.clone());
+        let frmod = self.module_ref().fr().mod_.clone();
+        self.gen_call(&frmod);
     }
 
     /// Generates Fr shl operation
     pub fn fr_shl(&mut self) {
-        self.gen_call(&self.fr.shl.clone());
+        let shl = self.module_ref().fr().shl.clone();
+        self.gen_call(&shl);
     }
 
     /// Generates Fr shr operation
     pub fn fr_shr(&mut self) {
-        self.gen_call(&self.fr.shr.clone());
+        let shr = self.module_ref().fr().shr.clone();
+        self.gen_call(&shr);
     }
 
     /// Generates Fr leq operation
     pub fn fr_leq(&mut self) {
-        self.gen_call(&self.fr.leq.clone());
+        let leq = self.module_ref().fr().leq.clone();
+        self.gen_call(&leq);
     }
 
     /// Generates Fr geq operation
     pub fn fr_geq(&mut self) {
-        self.gen_call(&self.fr.geq.clone());
+        let geq = self.module_ref().fr().geq.clone();
+        self.gen_call(&geq);
     }
 
     /// Generates Fr lt operation
     pub fn fr_lt(&mut self) {
-        self.gen_call(&self.fr.lt.clone());
+        let lt = self.module_ref().fr().lt.clone();
+        self.gen_call(&lt);
     }
 
     /// Generates Fr gt operation
     pub fn fr_gt(&mut self) {
-        self.gen_call(&self.fr.gt.clone());
+        let gt = self.module_ref().fr().gt.clone();
+        self.gen_call(&gt);
     }
 
     /// Generates Fr eq operation
     pub fn fr_eq(&mut self) {
-        self.gen_call(&self.fr.eq.clone());
+        let eq = self.module_ref().fr().eq.clone();
+        self.gen_call(&eq);
     }
 
     /// Generates Fr neq operation
     pub fn fr_neq(&mut self) {
-        self.gen_call(&self.fr.neq.clone());
+        let neq = self.module_ref().fr().neq.clone();
+        self.gen_call(&neq);
     }
 
     /// Generates Fr lor operation
     pub fn fr_lor(&mut self) {
-        self.gen_call(&self.fr.lor.clone());
+        let lor = self.module_ref().fr().lor.clone();
+        self.gen_call(&lor);
     }
 
     /// Generates Fr land operation
     pub fn fr_land(&mut self) {
-        self.gen_call(&self.fr.land.clone());
+        let land = self.module_ref().fr().land.clone();
+        self.gen_call(&land);
     }
 
     /// Generates Fr bor operation
     pub fn fr_bor(&mut self) {
-        self.gen_call(&self.fr.bor.clone());
+        let bor = self.module_ref().fr().bor.clone();
+        self.gen_call(&bor);
     }
 
     /// Generates Fr band operation
     pub fn fr_band(&mut self) {
-        self.gen_call(&self.fr.band.clone());
+        let band = self.module_ref().fr().band.clone();
+        self.gen_call(&band);
     }
 
     /// Generates Fr bxor operation
     pub fn fr_bxor(&mut self) {
-        self.gen_call(&self.fr.bxor.clone());
+        let bxor = self.module_ref().fr().bxor.clone();
+        self.gen_call(&bxor);
     }
 
     /// Generates Fr neg operation
     pub fn fr_neg(&mut self) {
-        self.gen_call(&self.fr.neg.clone());
+        let neg = self.module_ref().fr().neg.clone();
+        self.gen_call(&neg);
     }
 
     /// Generates Fr lnot operation
     pub fn fr_lnot(&mut self) {
-        self.gen_call(&self.fr.lnot.clone());
+        let lnot = self.module_ref().fr().lnot.clone();
+        self.gen_call(&lnot);
     }
 
     /// Generates Fr bnot operation
     pub fn fr_bnot(&mut self) {
-        self.gen_call(&self.fr.bnot.clone());
+        let bnot = self.module_ref().fr().bnot.clone();
+        self.gen_call(&bnot);
     }
 
     /// Generates saving Circom value located on top of stack to location specified
     /// in the second stack value
     pub fn gen_circom_store(&mut self) {
         // calling copy function
-        self.gen_call(&self.fr.copy.clone());
+        let copy = self.module_ref().fr().copy.clone();
+        self.gen_call(&copy);
     }
 
     /// Generates saving multiple Circom value located on top of stack to location specified
@@ -621,7 +645,8 @@ impl CircomFunction {
         } else {
             // calling copyn function
             self.load_const(WASMType::I32, size as i64);
-            self.gen_call(&self.fr.copyn.clone());
+            let copyn = self.module.borrow().fr().copyn.clone();
+            self.gen_call(&copyn);
         }
     }
 
@@ -686,8 +711,6 @@ impl CircomFunction {
         // removing parameter values from stack
         self.frame.pop(num_stack_vals);
 
-        self.debug_dump_state();
-
         // adding WASM return values to stack
         for ret_type in func_ref.tp().ret_types() {
             match ret_type {
@@ -704,7 +727,16 @@ impl CircomFunction {
     // Debugging
 
     /// Dumps state for debugging
-    pub fn debug_dump_state(&self) {
+    pub fn debug_dump_state(&self, stage: &str) {
+        if !is_log_enabled() {
+            return;
+        }
+
+        debug_log!("");
+        debug_log!("============================================================");
+        debug_log!("DUMP STATE BEGIN: {}", stage);
+        debug_log!("============================================================");
+
         debug_log!("CIRCOM STACK:");
         debug_log!("{}", self.frame.dump());
         debug_log!("");
@@ -715,6 +747,10 @@ impl CircomFunction {
 
         debug_log!("WASM STACK:");
         debug_log!("{}", self.func.borrow().dump_stack());
+        debug_log!("");
+
+        debug_log!("DUMP STATE END: {}", stage);
+        debug_log!("============================================================");
         debug_log!("");
     }
 }

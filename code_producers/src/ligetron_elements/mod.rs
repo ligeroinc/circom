@@ -1,22 +1,24 @@
 
+mod entry;
 mod fr;
 mod func;
 mod ligetron;
 mod log;
 mod memory_stack;
+mod module;
 mod stack;
 mod template;
 mod types;
 mod wasm;
 
-use stack::TemporaryStackValueRef;
 pub use template::SignalKind;
 pub use template::SignalInfo;
 
+use entry::*;
 use fr::*;
 use func::*;
-use ligetron::*;
 use log::*;
+use module::*;
 use template::*;
 use stack::*;
 use types::*;
@@ -24,60 +26,29 @@ use wasm::*;
 
 pub use template::TemplateInfo;
 
-use super::wasm_elements::wasm_code_generator::fr_types;
-use super::wasm_elements::wasm_code_generator::fr_data;
-use super::wasm_elements::wasm_code_generator::fr_code;
-
 use WASMType::*;
 
 use num_bigint_dig::BigInt;
-use std::borrow::Borrow;
 use std::rc::Rc;
 use std::cell::{RefCell, Ref, RefMut};
 use std::collections::HashMap;
 
 
-#[derive(Clone)]
-pub struct LigetronProducerInfo {
-    pub prime: BigInt,
-    pub prime_str: String,
-    pub fr_memory_size: usize,
-    pub size_32_bit: usize,
-    pub main_comp_id: usize,
-    pub templates: HashMap<usize, TemplateInfo>,
-    pub string_table: Vec<String>,
-    pub field_tracking: Vec<String>,
-    pub debug_output: bool
-}
+pub use module::LigetronProducerInfo;
 
 
 pub struct LigetronProducer {
     /// Code generation parameters
     info: LigetronProducerInfo,
 
-    /// String table, contains offset of strings in memory
-    string_table: HashMap<usize, usize>,
-
-    /// FR context
-    fr: FRContext,
-
-    /// Ligetron context
-    ligetron: LigetronContext,
-
-    /// WASM module being generated
-    module_: Rc<RefCell<WASMModule>>,
-
-    /// Referene to global variable for storing current memory stack frame pointer
-    stack_ptr: WASMGlobalVariableRef,
-
-    /// Vector of generated module instructions
-    instructions: Vec<String>,
+    /// Circom module being generated
+    module: Rc<RefCell<CircomModule>>,
 
     /// Generator for current function being generated
     func_: Option<Rc<RefCell<CircomFunction>>>,
 
     /// Generator for current template being generated
-    template_: Option<RefCell<Template>>
+    template_rc: Option<RefCell<Template>>
 }
 
 impl LigetronProducer {
@@ -89,62 +60,14 @@ impl LigetronProducer {
 
         debug_log!("LigetronProducer initialization begin");
 
-        // creating new module for generated code
-        let module = Rc::new(RefCell::new(WASMModule::new()));
-
-        // creating global variable for current memory stack pointer
-        let stack_ptr = module.borrow_mut().new_global(format!("stack_ptr"),
-                                                       WASMType::PTR,
-                                                       format!("(i32.const 0)")); 
-
-        let ligetron_print_type = WASMFunctionType::new().with_params(&[I64]);
-        let ligetron_print = module.borrow_mut().import_function("print",
-                                                                 ligetron_print_type,
-                                                                 "env",
-                                                                 "print");
-        let ligetron_print_str_type = WASMFunctionType::new().with_params(&[PTR, I32]);
-        let ligetron_print_str = module.borrow_mut().import_function("print_str",
-                                                                     ligetron_print_str_type,
-                                                                     "env",
-                                                                     "print_str");
-
-        let ligetron_dump_memory_type = WASMFunctionType::new().with_params(&[PTR, I32]);
-        let ligetron_dump_memory = module.borrow_mut().import_function("dump_memory",
-                                                                       ligetron_dump_memory_type,
-                                                                       "env",
-                                                                       "dump_memory");
-
-        let ligetron_assert_one_type = WASMFunctionType::new().with_params(&[I32]);
-        let ligetron_assert_one = module.borrow_mut().import_function("assert_one",
-                                                                      ligetron_assert_one_type,
-                                                                      "env",
-                                                                      "assert_one");
-
-        let ligetron = LigetronContext {
-            print: ligetron_print,
-            print_str: ligetron_print_str,
-            dump_memory: ligetron_dump_memory,
-            assert_one: ligetron_assert_one
-        };
-
-        // building string table
-        let mut string_table = HashMap::<usize, usize>::new();
-        let mut string_offset = info.fr_memory_size;
-        for (idx, str) in info.string_table.iter().enumerate() {
-            string_table.insert(idx, string_offset);
-            string_offset += str.len() + 1;
-        }
+        // creating new Circom module for generated code
+        let module = Rc::new(RefCell::new(CircomModule::new(info.clone())));
 
         return LigetronProducer {
             info: info.clone(),
-            string_table: string_table,
-            fr: FRContext::new(),
-            ligetron: ligetron,
-            module_: module,
-            stack_ptr: stack_ptr,
-            instructions: Vec::<String>::new(),
+            module,
             func_: None,
-            template_: None,
+            template_rc: None,
         };
     }
 
@@ -153,8 +76,7 @@ impl LigetronProducer {
 
     /// Loads constant with specified index to stack
     pub fn load_const(&mut self, const_idx: usize) {
-        let addr = self.calc_constants_start() +
-                   CircomValueType::FR.size(self.info.size_32_bit) * const_idx;
+        let addr = self.module_ref().constant_address(const_idx);
         self.func().load_mem_const(CircomValueType::FR, addr);
     }
 
@@ -177,7 +99,7 @@ impl LigetronProducer {
         let circom_locals = self.func().circom_locals();
 
         // calculating real offset of variable in array of all circom variables
-        if self.template_.is_some() {
+        if self.template_rc.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
             self.func().load_array_element_ref(&circom_locals);
@@ -210,7 +132,7 @@ impl LigetronProducer {
     pub fn load_local_var_array_ref(&mut self, size: usize) {
         let circom_locals = self.func().circom_locals();
 
-        if self.template_.is_some() {
+        if self.template_rc.is_some() {
             // if we are generating template then variable index is real variable index
             // because Circom compiler does not count input signals as function parameters
             self.func().load_array_slice_ref(&circom_locals, size);
@@ -256,13 +178,8 @@ impl LigetronProducer {
                         n_local_vars: usize,
                         ret_vals_size: usize) {
         assert!(self.func_.is_none());
-        let fgen = CircomFunction::new(self.info.size_32_bit,
-                                       self.fr.clone(),
-                                       self.module_.clone(),
-                                       self.stack_ptr,
-                                       name.to_string(),
-                                       n_local_vars);
-        self.func_ = Some(Rc::new(RefCell::new(fgen)));
+        let func = CircomFunction::new(self.module.clone(), name.to_string(), n_local_vars);
+        self.func_ = Some(Rc::new(RefCell::new(func)));
 
         // adding return values
         if ret_vals_size == 0 {
@@ -277,9 +194,7 @@ impl LigetronProducer {
     /// Finishes function generation
     pub fn end_function(&mut self, gen_entry_exit: bool) {
         assert!(self.func_.is_some());
-        self.instructions.push(format!(""));
-        let mut insts = self.func().generate(gen_entry_exit);
-        self.instructions.append(&mut insts);
+        self.func().generate(gen_entry_exit);
         self.func_ = None
     }
 
@@ -288,30 +203,8 @@ impl LigetronProducer {
     // Templates
 
     /// Returns reference to current template being generated
-    pub fn template(&self) -> Ref<Template> {
-        return self.template_.as_ref().expect("no current template").borrow();
-    }
-
-    /// Returns reference to mutable current template being generated
-    pub fn template_mut(&self) -> RefMut<Template> {
-        return self.template_.as_ref().expect("no current template").borrow_mut();
-    }
-
-    /// Returns name of run function for template with specified name
-    pub fn templ_run_function_name(&self, name: &str) -> String {
-        return format!("{}_template", name);
-    }
-
-    /// Returns template run function for template with specified ID
-    pub fn templ_run_function(&self, id: usize) -> CircomFunctionRef {
-        let templ = self.info.templates.get(&id).expect("no template found with specified id");
-        let func_name = self.templ_run_function_name(&templ.name());
-        return CircomFunctionRef::new(func_name, templ.function_type());
-    }
-
-    /// Returns run function for main component
-    pub fn main_comp_run_function(&self) -> CircomFunctionRef {
-        return self.templ_run_function(self.info.main_comp_id);
+    pub fn template(&self) -> RefMut<Template> {
+        return self.template_rc.as_ref().expect("no current template").borrow_mut();
     }
 
     /// Starts generating new template
@@ -319,31 +212,28 @@ impl LigetronProducer {
                         signals: &Vec<SignalInfo>,
                         n_local_vars: usize) {
         // creating new template generator
-        assert!(self.template_.is_none());
-        let tgen = Template::new(self.info.size_32_bit,
-                                          self.fr.clone(),
-                                          self.module_.clone(),
-                                          name.to_string(),
-                                          signals,
-                                          n_local_vars,
-                                          self.stack_ptr);
-        self.template_ = Some(RefCell::new(tgen));
+        assert!(self.template_rc.is_none());
+        let tgen = Template::new(self.module.clone(),
+                                 name.to_string(),
+                                 signals,
+                                 n_local_vars);
+        self.template_rc = Some(RefCell::new(tgen));
 
         // saving reference to function generator created by template generator
         assert!(self.func_.is_none());
-        self.func_ = Some(self.template_.as_ref().unwrap().borrow_mut().func_rc());
+        self.func_ = Some(self.template_rc.as_ref().unwrap().borrow_mut().func_rc());
     }
 
     /// Finishes generating template
     pub fn end_template(&mut self) {
         // generating final template code in function
-        self.template_mut().end();
+        self.template().end();
 
         // finishing function generation and adding it to module
         self.end_function(true);
 
         // removing current template generator
-        self.template_ = None;
+        self.template_rc = None;
     }
 
     /// Loads reference to signal on stack
@@ -361,7 +251,7 @@ impl LigetronProducer {
                 // This should be done in compile time inside stack logic.
                 self.func().load_const_index((curr_idx as i32) * -1);
                 self.func().index_add();
-                self.template_mut().load_signal_ref(&sig, size);
+                self.template().load_signal_ref(&sig, size);
 
                 break;
             }
@@ -375,19 +265,19 @@ impl LigetronProducer {
     pub fn create_subcmp(&mut self, subcmp_id: usize, template_id: usize) {
         let templ = self.info.templates.get(&template_id)
             .expect("can't find template with required ID for subcomponent");
-        self.template_mut().create_subcmp(subcmp_id, template_id, &templ);
+        self.template().create_subcmp(subcmp_id, template_id, &templ);
     }
 
     /// Loads reference to subcomponent signal
     pub fn load_subcmp_signal_ref(&mut self, subcmp_idx: usize, size: usize) {
-        self.template_mut().load_subcmp_signal_ref(subcmp_idx, size);
+        self.template().load_subcmp_signal_ref(subcmp_idx, size);
     }
 
     /// Generates code for running subcomponent after store to signal
     pub fn gen_subcmp_run(&mut self, subcmp_idx: usize, sig_size: usize) {
         let tid = self.template().subcmp_template_id(subcmp_idx);
-        let run_func = self.templ_run_function(tid);
-        self.template_mut().gen_subcmp_run(subcmp_idx, sig_size, run_func);
+        let run_func = self.module_ref().templ_run_function(tid);
+        self.template().gen_subcmp_run(subcmp_idx, sig_size, run_func);
     }
 
 
@@ -395,183 +285,24 @@ impl LigetronProducer {
 
     /// Generates assert operation
     pub fn assert(&self) {
-        self.func().gen_call(&self.fr.is_true);
-        self.func().gen_call(&CircomFunctionRef::from_wasm(&self.ligetron.assert_one));
+        let assert_one = self.module_ref().ligetron().assert_one.clone();
+        self.func().gen_call(&self.module_ref().fr().is_true);
+        self.func().gen_call(&CircomFunctionRef::from_wasm(&assert_one));
     }
 
-    /// Returns reference to module being generated
-    pub fn module(&self) -> RefMut<WASMModule> {
-        return self.module_.as_ref().borrow_mut();
+    /// Returns reference to Circom module being generated
+    pub fn module_ref(&self) -> Ref<CircomModule> {
+        return self.module.as_ref().borrow();
     }
 
-    /// Calculates size of string table
-    fn calc_string_table_size(&self) -> usize {
-        let mut sz = 0;
-        for str in &self.info.string_table {
-            sz += str.len() + 1;
-        }
-
-        return sz;
+    /// Returns mutable reference to Circom module being generated
+    pub fn module_mut(&mut self) -> RefMut<CircomModule> {
+        return self.module.as_ref().borrow_mut();
     }
 
-    /// Calculates sart offset of constants block
-    fn calc_constants_start(&self) -> usize {
-        return self.info.fr_memory_size +
-               self.calc_string_table_size();
-    }
-
-    /// Calculates size of constants table
-    fn calc_constants_table_size(&self) -> usize {
-        return self.info.field_tracking.len() * (self.info.size_32_bit + 2) * 4;
-    }
-
-    /// Calculates start offset of memory stack
-    fn calc_mem_stack_start(&self) -> usize {
-        return self.info.fr_memory_size +
-               self.calc_string_table_size() +
-               self.calc_constants_table_size();
-    }
-
-    /// Generates string table
-    fn generate_strings(&self) -> Vec<String> {
-        let mut strings = Vec::<String>::new();
-        let mut offset = self.info.fr_memory_size;
-
-        for str in &self.info.string_table {
-            strings.push(format!("(data (i32.const {}) \"{}\\00\")", offset, str));
-            offset += str.len() + 1;
-        }
-
-        return strings;
-    }
-
-    /// Generates constants data string (copied from wasm_code_generator.rs)
-    fn generate_data_constants(&self, constant_list: &Vec<String>) -> String {
-        use crate::wasm_elements::wasm_code_generator::wasm_hexa;
-
-        let mut constant_list_data = "".to_string();
-        //    For short/long form
-        //    let szero = wasm_hexa(producer.get_size_32_bit()*4,&BigInt::from(0));
-        for s in constant_list {
-            /*
-                    // Only long form
-                    let n = s.parse::<BigInt>().unwrap();
-                    constant_list_data.push_str("\\00\\00\\00\\00\\00\\00\\00\\80");
-                    constant_list_data.push_str(&wasm_hexa(producer.get_size_32_bit()*4,&n));
-            */
-            //      For sort/long or short/montgomery
-            let mut n = s.parse::<BigInt>().unwrap();
-            let min_int = BigInt::from(-2147483648);
-            let max_int = BigInt::from(2147483647);
-            let p = self.info.prime.clone();
-            let b = ((p.bits() + 63) / 64) * 64;
-            let mut r = BigInt::from(1);
-            r = r << b;
-            n = n % BigInt::clone(&p);
-            n = n + BigInt::clone(&p);
-            n = n % BigInt::clone(&p);
-            let hp = BigInt::clone(&p) / 2;
-            let mut nn;
-            if BigInt::clone(&n) > hp {
-                nn = BigInt::clone(&n) - BigInt::clone(&p);
-            } else {
-                nn = BigInt::clone(&n);
-            }
-            /*
-                    // short/long
-                    if min_int <= nn && nn <= max_int {
-                    // It is short
-                        if nn < BigInt::from(0) {
-                            nn = BigInt::parse_bytes(b"100000000", 16).unwrap() + nn;
-                        }
-                        constant_list_data.push_str(&wasm_hexa(4,&nn));
-                        constant_list_data.push_str("\\00\\00\\00\\00");  // 0000
-                        constant_list_data.push_str(&szero);
-                    } else {
-                    //It is long
-                        constant_list_data.push_str("\\00\\00\\00\\00\\00\\00\\00\\80"); // 1000
-                        constant_list_data.push_str(&wasm_hexa(producer.get_size_32_bit()*4,&n));
-                    }
-            */
-            //short/montgomery
-            if min_int <= nn && nn <= max_int {
-                // It is short. We have it in short & Montgomery
-                if nn < BigInt::from(0) {
-                    nn = BigInt::parse_bytes(b"100000000", 16).unwrap() + nn;
-                }
-                constant_list_data.push_str(&wasm_hexa(4, &nn));
-                constant_list_data.push_str("\\00\\00\\00\\40"); // 0100
-            } else {
-                //It is long. Only Montgomery
-                constant_list_data.push_str("\\00\\00\\00\\00\\00\\00\\00\\C0"); // 1100
-            }
-            // Montgomery
-            // n*R mod P
-            n = (n * BigInt::clone(&r)) % BigInt::clone(&p);
-            constant_list_data.push_str(&wasm_hexa(self.info.size_32_bit * 4, &n));
-        }
-        constant_list_data
-    }
-
-    /// Generates constatnts data
-    fn generate_constants(&self) -> String {
-        let start = self.info.fr_memory_size + self.calc_string_table_size();
-        let data = self.generate_data_constants(&self.info.field_tracking);
-        return format!("(data (i32.const {}) \"{}\")", start, data);
-    }
-
-    /// Generates final code for module. Makes this instance invalid
+    /// Generates final code for module
     pub fn generate(&mut self) -> Vec<String> {
-        let mut instructions = Vec::<String>::new();
-
-        // module header 
-        instructions.push(format!("(module"));
-
-        // imports
-        instructions.push(format!(""));
-        instructions.append(&mut self.module().generate_imports());
-
-        // global memory definition
-        instructions.push(format!(""));
-        instructions.push(format!("(memory 1 1)"));
-        instructions.push(format!("(export \"memory\" (memory 0))"));
-
-        // FR types
-        instructions.push(format!(""));
-        instructions.push(format!(";; Begin of FR types"));
-        instructions.append(&mut fr_types(&self.info.prime_str));
-        instructions.push(format!(";; End of FR types"));
-
-        // FR data
-        instructions.push(format!(""));
-        instructions.push(format!(";; Begin of FR data"));
-        instructions.append(&mut fr_data(&self.info.prime_str));
-        instructions.push(format!(";; End of FR data"));
-
-        // String table
-        instructions.append(&mut self.generate_strings());
-
-        // constants table
-        instructions.push(self.generate_constants());
-
-        // module globals
-        instructions.push(format!(""));
-        instructions.append(&mut self.module().generate_globals());
-
-        // FR code
-        instructions.push(format!(""));
-        instructions.push(format!(";; Begin of FR code"));
-        instructions.append(&mut fr_code(&self.info.prime_str));
-        instructions.push(format!(";; End of FR code"));
-
-        // module instructions
-        instructions.append(&mut self.instructions);
-
-        // module footer
-        instructions.push(format!(""));
-        instructions.push(format!(")"));
-
-        return instructions;
+        return self.module_mut().generate();
     }
 
 
@@ -589,156 +320,7 @@ impl LigetronProducer {
 
     /// Generates entry point function for program.
     pub fn generate_entry(&mut self, func_name: String) {
-        self.new_function(&func_name, 0, 0);
-        self.func().set_export_name(&func_name);
-
-        // initializing memory stack pointer
-        self.func().gen_wasm_comment("initializing memory stack pointer");
-        self.func().gen_wasm_const(PTR, self.calc_mem_stack_start() as i64);
-        self.func().gen_wasm_global_set(&self.stack_ptr);
-
-        // we use beginning of memory stack to temporarly
-        // store information about command line arguments
-
-        // getting number of arguments and buffer size for arguments.
-        let args_sizes_get = self.module().import_function(
-            "args_sizes_get",
-            WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
-            "wasi_snapshot_preview1",
-            "args_sizes_get");
-        self.func().gen_wasm_comment("getting size of program arguments");
-        self.func().gen_wasm_global_get(&self.stack_ptr);    // address to store number of args
-        self.func().gen_wasm_global_get(&self.stack_ptr);
-        self.func().gen_wasm_const(I32, 4);
-        self.func().gen_wasm_add(PTR);                       // address to store required args buffer size
-        self.func().gen_wasm_call(&args_sizes_get);
-
-        // removing call return value with error code from stack
-        // TODO: check error code
-        self.func().gen_wasm_drop();
-
-        // saving number of arguments into local
-        self.func().gen_wasm_comment("saving number of arguments into argc local");
-        let argc = self.func().new_wasm_named_local("argc", I32);
-        self.func().gen_wasm_global_get(&self.stack_ptr);
-        self.func().gen_wasm_load(I32);
-        self.func().gen_wasm_local_set(&argc);
-
-        // saving size of buffer for arguments into local
-        self.func().gen_wasm_comment("saving size of buffer for arguments into argv_size local");
-        let argv_size = self.func().new_wasm_named_local("argv_size", I32);
-        self.func().gen_wasm_global_get(&self.stack_ptr);
-        self.func().gen_wasm_const(I32, 4);
-        self.func().gen_wasm_add(PTR);
-        self.func().gen_wasm_load(I32);
-        self.func().gen_wasm_local_set(&argv_size);
-
-        // getting arguments
-        let args_get = self.module().import_function(
-            "args_get",
-            WASMFunctionType::new().with_ret_type(I32).with_params(&[PTR, PTR]),
-            "wasi_snapshot_preview1",
-            "args_get");
-        self.func().gen_wasm_comment("getting program arguments");
-        self.func().gen_wasm_global_get(&self.stack_ptr);    // address to store pointers to arguments
-        self.func().gen_wasm_global_get(&self.stack_ptr);
-        self.func().gen_wasm_local_get(&argc);
-        self.func().gen_wasm_const(I32, 4);
-        self.func().gen_wasm_mul(I32);
-        self.func().gen_wasm_add(PTR);
-        self.func().gen_wasm_call(&args_get);
-
-        // removing call result with error code
-        // TODO: check error code
-        self.func().gen_wasm_drop();
-
-        let main_comp_func = self.main_comp_run_function();
-
-        // saving arguments to local variables
-        let mut args = Vec::<WASMLocalVariableRef>::new();
-        let mut arg_idx = 1;
-        for par_type in main_comp_func.tp().params() {
-            let sz = match par_type {
-                CircomValueType::FRArray(size) => *size,
-                CircomValueType::FR => 1,
-                CircomValueType::WASM(..) => {
-                    panic!("Component function can't have wasm parameters");
-                }
-            };
-
-            for _ in 0 .. sz {
-                let loc = self.func().new_wasm_named_local(&format!("arg_{}", arg_idx), I64);
-                self.func().gen_wasm_global_get(&self.stack_ptr);
-                self.func().gen_wasm_const(I32, (arg_idx * 4) as i64);
-                self.func().gen_wasm_add(PTR);
-                self.func().gen_wasm_load(PTR);
-                self.func().gen_wasm_load(I64);
-                self.func().gen_wasm_local_set(&loc);
-                args.push(loc);
-
-                arg_idx += 1;
-            }
-        }
-
-        self.debug_dump_state("BEFORE ENTRY RESULTS");
-
-        // allocating FR array for results
-        self.func().gen_wasm_comment("allocating Fr array for main component results");
-        let ret_vals = self.func().alloc_temp_n(main_comp_func.tp().ret_types());
-
-        self.debug_dump_state("AFTER ENTRY RESULTS");
-
-        // creating FR values from program arguments with Fr_rawCopyS2L function
-
-        self.func().gen_wasm_comment("creating Fr array for porgram arguments");
-        let fr_args = self.func().alloc_temp_n(main_comp_func.tp().params());
-
-        let mut arg_idx = 0;
-        for (fr_arg_idx, par_type) in main_comp_func.tp().params().iter().enumerate() {
-            match par_type {
-                CircomValueType::FRArray(size) => {
-                    for i in 0 .. *size {
-                        self.func().load_const_index(i as i32);
-                        self.func().load_array_element_ref(&fr_args[fr_arg_idx]);
-                        self.func().load_wasm_local(&args[arg_idx]);
-                        self.func().gen_call(&self.fr.raw_copy);
-                        arg_idx += 1;
-                    }
-                }
-                CircomValueType::FR => {
-                    self.func().load_ref(&fr_args[fr_arg_idx]);
-                    self.func().load_wasm_local(&args[arg_idx]);
-
-                    self.debug_dump_state("BEFORE raw copy");
-                    self.func().gen_call(&self.fr.raw_copy);
-                    self.debug_dump_state("AFTER raw copy");
-
-                    arg_idx += 1;
-                }
-                CircomValueType::WASM(..) => {
-                    panic!("Component function can't have wasm parameters");
-                }
-            }
-        }
-
-        self.debug_dump_state("AFTER ENTRY ARGUMENTS");
-
-        // executing main component
-        self.func().gen_wasm_comment("executing main component");
-        self.func().gen_call(&self.main_comp_run_function());
-
-        // calling exit function at the end of entry function
-        // TODO: pass correct exit code?
-        let proc_exit = self.module().import_function(
-            "proc_exit",
-            WASMFunctionType::new().with_params(&[I32]),
-            "wasi_snapshot_preview1",
-            "proc_exit");
-        self.func().gen_wasm_comment("calling exit function");
-        self.func().gen_wasm_const(I32, 0);
-        self.func().gen_wasm_call(&proc_exit);
-
-        self.end_function(false);
+        generate_entry(self.module.clone(), func_name);
     }
 
 
@@ -908,7 +490,7 @@ impl LigetronProducer {
     /// Generates conversion of stack top value to address
     pub fn to_address(&mut self) {
         // converting value to address with Fr_toInt function
-        self.func().gen_call(&self.fr.to_int);
+        self.func().gen_call(&self.module_ref().fr().to_int);
 
         // converting WASM I32 value to address
         self.func().convert_index();
@@ -930,7 +512,7 @@ impl LigetronProducer {
 
     /// Starts generating if-else block using current stack value as condition
     pub fn gen_if(&mut self) {
-        self.func().gen_call(&self.fr.is_true);
+        self.func().gen_call(&self.module_ref().fr().is_true);
         self.func().gen_wasm_if();
     }
 
@@ -957,7 +539,7 @@ impl LigetronProducer {
     /// Generates conditional exit from current loop using current FR value on stack
     /// as loop condition
     pub fn gen_loop_exit(&mut self) {
-        self.func().gen_call(&self.fr.is_true);
+        self.func().gen_call(&self.module_ref().fr().is_true);
         self.func().gen_wasm_eqz(&WASMType::I32);
         self.func().gen_wasm_loop_exit();
     }
@@ -969,13 +551,14 @@ impl LigetronProducer {
     /// Generates logging of string message
     pub fn log_str(&mut self, str_idx: usize) {
         // looking of string offset in string table
-        let str_offset = self.string_table.get(&str_idx).unwrap();
+        let str_offset = self.module_ref().string_address(str_idx);
 
         // generating call to Ligetron print_str function
+        let print_str = self.module_ref().ligetron().print_str.clone();
         self.func().gen_wasm_comment("logging string");
-        self.func().gen_wasm_const(PTR, *str_offset as i64);
+        self.func().gen_wasm_const(PTR, str_offset as i64);
         self.func().gen_wasm_const(I32, self.info.string_table[str_idx].len() as i64);
-        self.func().gen_wasm_call(&self.ligetron.print_str);
+        self.func().gen_wasm_call(&print_str);
     }
 
     /// Generates logging of value located on stack
@@ -991,7 +574,8 @@ impl LigetronProducer {
 
         // generating call to Ligetron dump_memory function
         self.debug_dump_state("BEFORE dump_memory");
-        self.func().gen_wasm_call(&self.ligetron.dump_memory);
+        let dump_memory = self.module_ref().ligetron().dump_memory.clone();
+        self.func().gen_wasm_call(&dump_memory);
         self.debug_dump_state("AFTER dump_memory");
     }
 
@@ -1001,20 +585,7 @@ impl LigetronProducer {
 
     /// Dumps current generator state for debugging
     pub fn debug_dump_state(&self, stage: &str) {
-        if !log::is_log_enabled() {
-            return;
-        }
-
-        log::debug_log!("");
-        log::debug_log!("============================================================");
-        log::debug_log!("DUMP STATE BEGIN: {}", stage);
-        log::debug_log!("============================================================");
-
-        self.func().debug_dump_state();
-
-        log::debug_log!("DUMP STATE END: {}", stage);
-        log::debug_log!("============================================================");
-        log::debug_log!("");
+        self.func().debug_dump_state(stage);
     }
 
     /// Dumps current stack contents to string
