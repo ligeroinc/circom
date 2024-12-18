@@ -269,22 +269,8 @@ fn initialize_ligetron_producer(vcp: &VCP,
         templates.insert(templ.template_id, info);
     }
 
-    let initial_node = vcp.get_main_id();
-    let prime = UsefulConstants::new(&vcp.prime).get_p().clone();
     return LigetronProducerInfo {
-        prime: UsefulConstants::new(&vcp.prime).get_p().clone(),
-        prime_str: vcp.prime.clone(),
-        fr_memory_size: match vcp.prime.as_str(){
-            "goldilocks" => 412,
-            "bn128" => 1948,
-            "bls12381" => 1948,
-            "grumpkin" => 1948,
-            "pallas" => 1948,
-            "vesta" => 1948,
-            "secq256r1" => 1948,
-            _ => unreachable!()
-        },
-        size_32_bit: prime.bits() / 32 + if prime.bits() % 32 != 0 { 1 } else { 0 },
+        const_size: 32,
         templates: templates,
         main_comp_id: vcp.get_main_instance().unwrap().template_id,
         string_table: vec![],

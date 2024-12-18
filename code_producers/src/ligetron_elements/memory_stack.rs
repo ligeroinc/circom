@@ -270,6 +270,21 @@ impl MemoryStackFrame {
         self.inst_gen.borrow_mut().gen_global_set(&self.stack_ptr);
     }
 
+    /// Generates loading address of memory stack local to WASM stack for specified
+    /// instruction generator
+    pub fn gen_load_local_addr_igen(&self,
+                                    loc_ref: &MemoryStackLocalRef,
+                                    offset: usize,
+                                    igen: &mut InstructionGenerator) {
+        let loc = &self.locals[loc_ref.idx];
+        igen.gen_local_get(&self.frame_base);
+        let total_offset = loc.offset + offset;
+        if total_offset != 0 {
+            igen.gen_const(WASMType::I32, total_offset as i64);
+            igen.gen_add(WASMType::PTR);
+        }
+    }
+
     /// Generates loading address of memory stack local to WASM stack
     pub fn gen_load_local_addr(&self, loc_ref: &MemoryStackLocalRef) {
         let loc = &self.locals[loc_ref.idx];

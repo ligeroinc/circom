@@ -1,4 +1,5 @@
 
+use super::types::*;
 use super::wasm::*;
 
 
@@ -8,4 +9,121 @@ pub struct LigetronContext {
     pub print_str: WASMFunctionRef,
     pub dump_memory: WASMFunctionRef,
     pub assert_one: WASMFunctionRef,
+
+    pub fp256_init: CircomFunctionRef,
+    pub fp256_clear: CircomFunctionRef,
+    pub fp256_set_ui: CircomFunctionRef,
+    pub fp256_from_hex: CircomFunctionRef,
+    pub fp256_set_str: CircomFunctionRef,
+    pub fp256_set_fp256: CircomFunctionRef,
+    pub fp256_print: CircomFunctionRef,
+    pub fp256_addmod: CircomFunctionRef,
+    pub fp256_submod: CircomFunctionRef,
+    pub fp256_mulmod: CircomFunctionRef,
+    pub fp256_divmod: CircomFunctionRef,
+    pub fp256_reduce: CircomFunctionRef,
+    pub fp256_assert_equal: CircomFunctionRef,
+}
+
+impl LigetronContext {
+    /// Creates new Ligetrong context making imports in specified WASM module
+    pub fn new(module: &mut WASMModule) -> LigetronContext {
+        let ligetron_print_type = WASMFunctionType::new().with_params(&[WASMType::I64]);
+        let ligetron_print = module.import_function("print",
+                                                    ligetron_print_type,
+                                                    "env",
+                                                    "print");
+
+        let ligetron_print_str_type = WASMFunctionType::new().with_params(&[WASMType::PTR, WASMType::I32]);
+        let ligetron_print_str = module.import_function("print_str",
+                                                        ligetron_print_str_type,
+                                                        "env",
+                                                        "print_str");
+
+        let ligetron_dump_memory_type = WASMFunctionType::new().with_params(&[WASMType::PTR, WASMType::I32]);
+        let ligetron_dump_memory = module.import_function("dump_memory",
+                                                          ligetron_dump_memory_type,
+                                                          "env",
+                                                          "dump_memory");
+
+        let ligetron_assert_one_type = WASMFunctionType::new().with_params(&[WASMType::I32]);
+        let ligetron_assert_one = module.import_function("assert_one",
+                                                         ligetron_assert_one_type,
+                                                         "env",
+                                                         "assert_one");
+
+        let fp256_init_type = CircomFunctionType::new(vec![], vec![CircomValueType::FR]);
+        let fp256_init = Self::import_function(module, "fp256_init", fp256_init_type);
+
+        let fp256_clear_type = CircomFunctionType::new(vec![], vec![CircomValueType::FR]);
+        let fp256_clear = Self::import_function(module, "fp256_clear", fp256_clear_type);
+
+        let fp256_set_ui_type = CircomFunctionType::new(vec![CircomValueType::WASM(WASMType::I64)],
+                                                        vec![CircomValueType::FR]);
+        let fp256_set_ui = Self::import_function(module, "fp256_set_ui", fp256_set_ui_type);
+
+        let fp256_from_hex_params = vec![CircomValueType::WASM(WASMType::PTR),
+                                         CircomValueType::WASM(WASMType::I32)];
+        let fp256_from_hex_type = CircomFunctionType::new(fp256_from_hex_params,
+                                                          vec![CircomValueType::FR]);
+        let fp256_from_hex = Self::import_function(module, "fp256_from_hex", fp256_from_hex_type);
+
+        let fp256_set_str_params = vec![CircomValueType::WASM(WASMType::PTR),
+                                         CircomValueType::WASM(WASMType::I32)];
+        let fp256_set_str_ret_types = vec![CircomValueType::FR,
+                                           CircomValueType::WASM(WASMType::I32)];
+        let fp256_set_str_type = CircomFunctionType::new(fp256_set_str_params,
+                                                         fp256_set_str_ret_types);
+        let fp256_set_str = Self::import_function(module, "fp256_set_str", fp256_set_str_type);
+
+        let fp256_set_fp256_type = CircomFunctionType::new(vec![CircomValueType::FR],
+                                                           vec![CircomValueType::FR]);
+        let fp256_set_fp256 = Self::import_function(module, "fp256_set_fp256", fp256_set_fp256_type);
+
+        let fp256_print_type = CircomFunctionType::new(vec![], vec![CircomValueType::FR]);
+        let fp256_print = Self::import_function(module, "fp256_print", fp256_print_type);
+
+        let fp256_op_type = CircomFunctionType::new(vec![CircomValueType::FR, CircomValueType::FR],
+                                                    vec![CircomValueType::FR]);
+        let fp256_addmod = Self::import_function(module, "fp256_addmod", fp256_op_type.clone());
+        let fp256_submod = Self::import_function(module, "fp256_submod", fp256_op_type.clone());
+        let fp256_mulmod = Self::import_function(module, "fp256_mulmod", fp256_op_type.clone());
+        let fp256_divmod = Self::import_function(module, "fp256_divmod", fp256_op_type.clone());
+        let fp256_reduce = Self::import_function(module, "fp256_reduce", fp256_op_type.clone());
+
+        let fp256_assert_equal_type = CircomFunctionType::new(vec![CircomValueType::FR,
+                                                                   CircomValueType::FR],
+                                                              vec![]);
+        let fp256_assert_equal = Self::import_function(module, "fp256_assert_equal", fp256_assert_equal_type);
+
+
+        return LigetronContext {
+            print: ligetron_print,
+            print_str: ligetron_print_str,
+            dump_memory: ligetron_dump_memory,
+            assert_one: ligetron_assert_one,
+
+            fp256_init: fp256_init,
+            fp256_clear: fp256_clear,
+            fp256_set_ui: fp256_set_ui,
+            fp256_from_hex: fp256_from_hex,
+            fp256_set_str: fp256_set_str,
+            fp256_set_fp256: fp256_set_fp256,
+            fp256_print: fp256_print,
+            fp256_addmod: fp256_addmod,
+            fp256_submod: fp256_submod,
+            fp256_mulmod: fp256_mulmod,
+            fp256_divmod: fp256_divmod,
+            fp256_reduce: fp256_reduce,
+            fp256_assert_equal: fp256_assert_equal
+        };
+    }
+
+    /// Imports ligetron function
+    fn import_function(module: &mut WASMModule,
+                       name: &str,
+                       tp: CircomFunctionType) -> CircomFunctionRef {
+        module.import_function(&name, tp.to_wasm(), "ligetron", &name);
+        return CircomFunctionRef::new(name.to_string(), tp);
+    }
 }

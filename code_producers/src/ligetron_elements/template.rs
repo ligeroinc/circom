@@ -6,16 +6,9 @@ use super::stack::CircomReturnValueRef;
 use super::types::*;
 use super::wasm::*;
 use super::CircomModule;
-use super::ConvertibleToValueRef;
-use super::FRContext;
-use super::LigetronProducerInfo;
 
-use serde_json::Value;
-use WASMType::*;
-
-use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::{RefCell, Ref, RefMut};
+use std::cell::{RefCell, RefMut};
 
 
 /// Signal kind

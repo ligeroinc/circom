@@ -24,11 +24,11 @@ impl CircomValueType {
     }
 
     /// Returns type size in bytes
-    pub fn size(&self, fr_32bit_size: usize) -> usize {
+    pub fn size(&self) -> usize {
         return match self {
             CircomValueType::WASM(wasm_type) => wasm_type.size(),
-            CircomValueType::FR => (fr_32bit_size + 2) * 4,
-            CircomValueType::FRArray(sz) => CircomValueType::FR.size(fr_32bit_size) * sz
+            CircomValueType::FR => 4,
+            CircomValueType::FRArray(sz) => CircomValueType::FR.size() * sz
         }
     }
 

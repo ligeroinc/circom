@@ -1,5 +1,4 @@
 
-use super::fr::*;
 use super::log::*;
 use super::memory_stack::*;
 use super::stack::*;
@@ -8,9 +7,7 @@ use super::wasm::*;
 use super::CircomModule;
 
 use std::rc::Rc;
-use std::cell::{RefCell, Ref, RefMut};
-
-use WASMType::*;
+use std::cell::{RefCell, RefMut};
 
 
 /// Represents current Circom function being generated
@@ -58,9 +55,7 @@ impl CircomFunction {
 
         let func_rc = Rc::new(RefCell::new(func));
 
-        let mut frame = CircomStackFrame::new(module.borrow().var_size_32_bit(),
-                                              func_rc.clone(),
-                                              mem_frame.clone());
+        let mut frame = CircomStackFrame::new(module.clone(), func_rc.clone(), mem_frame.clone());
 
         // Allocating array of variables for Circom local variables. This is required
         // because Circom compiler references all variables by index, and we can't detect
@@ -98,6 +93,14 @@ impl CircomFunction {
         self.func.borrow_mut().set_export_name(name);
     }
 
+    // /// Generates initialization of FR local variables
+    // fn generate_fr_locals_init(&mut self) {
+    //     let stack_rc = Rc::new(RefCell::new(WASMStackState::new()));
+    //     let mut gen = InstructionGenerator::new(self.module_ref().wasm_module_rc().clone(),
+    //                                             self.func.borrow().frame_rc().clone(),
+    //                                             stack_rc);
+    // }
+
     /// Generates function code as list of instructions and appends them into module.
     /// Makes this instance invalid.
     pub fn generate(&mut self, gen_func_entry_exit: bool) {
@@ -112,8 +115,8 @@ impl CircomFunction {
 
         // generating function entry and exit code code for memory stack frame
         if gen_func_entry_exit {
-            self.mem_frame().gen_func_entry();
-            self.mem_frame().gen_func_exit();
+            self.frame.gen_func_entry();
+            self.frame.gen_func_exit();
         }
 
         self.module_ref().append_instruction(&mut vec![format!("")]);
@@ -133,8 +136,22 @@ impl CircomFunction {
     }
 
     /// Loads WASM constant value on stack
-    pub fn load_const(&mut self, tp: WASMType, val: i64) {
+    pub fn load_wasm_const(&mut self, tp: WASMType, val: i64) {
         self.frame.load_const(tp, val);
+    }
+
+    /// Loads constant located in global memory onto stack
+    pub fn load_const(&mut self, const_idx: usize) {
+        let addr = self.module_ref().constant_address(const_idx);
+
+        let tmp_val = self.alloc_temp(CircomValueType::FR);
+
+        self.load_ref(&tmp_val);
+        self.load_wasm_const(WASMType::PTR, addr as i64);
+        let csize = self.module_ref().const_size();
+        self.load_wasm_const(WASMType::I32, csize as i64);
+        let fp256_from_hex = self.module_ref().ligetron().fp256_from_hex.clone();
+        self.gen_call(&fp256_from_hex);
     }
 
     /// Loads U32 constant value on stack
@@ -142,9 +159,11 @@ impl CircomFunction {
         if self.const_addr_mode {
             self.load_const_index(val as i32);
         } else {
-            self.load_const(WASMType::I64, val as i64);
-            let raw_copy = self.module_ref().fr().raw_copy.clone();
-            self.gen_call(&raw_copy);
+            let tmp_val = self.alloc_temp(CircomValueType::FR);
+            self.load_ref(&tmp_val);
+            self.load_wasm_const(WASMType::I64, val as i64);
+            let fp256_set_ui = self.module_ref().ligetron().fp256_set_ui.clone();
+            self.gen_call(&fp256_set_ui);
         }
     }
 
@@ -421,6 +440,12 @@ impl CircomFunction {
         self.frame.push_wasm_stack(tp);
     }
 
+    /// Generates store instruction
+    pub fn gen_wasm_store(&mut self, tp: WASMType) {
+        self.frame.pop_wasm_stack(&WASMType::PTR);
+        self.func.borrow_mut().gen_store(&tp);
+    }
+
     /// Starts generating if-else block
     pub fn gen_wasm_if(&mut self) {
         self.frame.pop_wasm_stack(&WASMType::I32);
@@ -493,148 +518,165 @@ impl CircomFunction {
 
     /// Generates Fr mul operation
     pub fn fr_mul(&mut self) {
-        let mul = self.module_ref().fr().mul.clone();
-        self.gen_call(&mul);
+        let fp256_mulmod = self.module_ref().ligetron().fp256_mulmod.clone();
+        self.gen_call(&fp256_mulmod);
     }
 
     /// Generates Fr div operation
     pub fn fr_div(&mut self) {
-        let div = self.module_ref().fr().div.clone();
-        self.gen_call(&div);
+        let fp256_divmod = self.module_ref().ligetron().fp256_divmod.clone();
+        self.gen_call(&fp256_divmod);
     }
 
     /// Generates Fr add operation
     pub fn fr_add(&mut self) {
-        let add = self.module_ref().fr().add.clone();
-        self.gen_call(&add);
+        let fp256_addmod = self.module_ref().ligetron().fp256_addmod.clone();
+        self.gen_call(&fp256_addmod);
     }
 
     /// Generates Fr sub operation
     pub fn fr_sub(&mut self) {
-        let sub = self.module_ref().fr().sub.clone();
-        self.gen_call(&sub);
+        let fp256_submod = self.module_ref().ligetron().fp256_submod.clone();
+        self.gen_call(&fp256_submod);
     }
 
     /// Generates Fr pow operation
     pub fn fr_pow(&mut self) {
-        let pow = self.module_ref().fr().pow.clone();
-        self.gen_call(&pow);
+        panic!("Not implemented for fp256");
+        // let pow = self.module_ref().fr().pow.clone();
+        // self.gen_call(&pow);
     }
 
     /// Generates Fr idiv operation
     pub fn fr_idiv(&mut self) {
-        let idiv = self.module_ref().fr().idiv.clone();
-        self.gen_call(&idiv);
+        panic!("Not implemented for fp256");
+        // let idiv = self.module_ref().fr().idiv.clone();
+        // self.gen_call(&idiv);
     }
 
     /// Generates Fr mod operation
     pub fn fr_mod(&mut self) {
-        let frmod = self.module_ref().fr().mod_.clone();
-        self.gen_call(&frmod);
+        panic!("Not implemented for fp256");
+        // let frmod = self.module_ref().fr().mod_.clone();
+        // self.gen_call(&frmod);
     }
 
     /// Generates Fr shl operation
     pub fn fr_shl(&mut self) {
-        let shl = self.module_ref().fr().shl.clone();
-        self.gen_call(&shl);
+        panic!("Not implemented for fp256");
+        // let shl = self.module_ref().fr().shl.clone();
+        // self.gen_call(&shl);
     }
 
     /// Generates Fr shr operation
     pub fn fr_shr(&mut self) {
-        let shr = self.module_ref().fr().shr.clone();
-        self.gen_call(&shr);
+        panic!("Not implemented for fp256");
+        // let shr = self.module_ref().fr().shr.clone();
+        // self.gen_call(&shr);
     }
 
     /// Generates Fr leq operation
     pub fn fr_leq(&mut self) {
-        let leq = self.module_ref().fr().leq.clone();
-        self.gen_call(&leq);
+        panic!("Not implemented for fp256");
+        // let leq = self.module_ref().fr().leq.clone();
+        // self.gen_call(&leq);
     }
 
     /// Generates Fr geq operation
     pub fn fr_geq(&mut self) {
-        let geq = self.module_ref().fr().geq.clone();
-        self.gen_call(&geq);
+        panic!("Not implemented for fp256");
+        // let geq = self.module_ref().fr().geq.clone();
+        // self.gen_call(&geq);
     }
 
     /// Generates Fr lt operation
     pub fn fr_lt(&mut self) {
-        let lt = self.module_ref().fr().lt.clone();
-        self.gen_call(&lt);
+        panic!("Not implemented for fp256");
+        // let lt = self.module_ref().fr().lt.clone();
+        // self.gen_call(&lt);
     }
 
     /// Generates Fr gt operation
     pub fn fr_gt(&mut self) {
-        let gt = self.module_ref().fr().gt.clone();
-        self.gen_call(&gt);
+        panic!("Not implemented for fp256");
+        // let gt = self.module_ref().fr().gt.clone();
+        // self.gen_call(&gt);
     }
 
     /// Generates Fr eq operation
     pub fn fr_eq(&mut self) {
-        let eq = self.module_ref().fr().eq.clone();
-        self.gen_call(&eq);
+        let fp256_assert_equal = self.module_ref().ligetron().fp256_assert_equal.clone();
+        self.gen_call(&fp256_assert_equal);
     }
 
     /// Generates Fr neq operation
     pub fn fr_neq(&mut self) {
-        let neq = self.module_ref().fr().neq.clone();
-        self.gen_call(&neq);
+        panic!("Not implemented for fp256");
+        // let neq = self.module_ref().fr().neq.clone();
+        // self.gen_call(&neq);
     }
 
     /// Generates Fr lor operation
     pub fn fr_lor(&mut self) {
-        let lor = self.module_ref().fr().lor.clone();
-        self.gen_call(&lor);
+        panic!("Not implemented for fp256");
+        // let lor = self.module_ref().fr().lor.clone();
+        // self.gen_call(&lor);
     }
 
     /// Generates Fr land operation
     pub fn fr_land(&mut self) {
-        let land = self.module_ref().fr().land.clone();
-        self.gen_call(&land);
+        panic!("Not implemented for fp256");
+        // let land = self.module_ref().fr().land.clone();
+        // self.gen_call(&land);
     }
 
     /// Generates Fr bor operation
     pub fn fr_bor(&mut self) {
-        let bor = self.module_ref().fr().bor.clone();
-        self.gen_call(&bor);
+        panic!("Not implemented for fp256");
+        // let bor = self.module_ref().fr().bor.clone();
+        // self.gen_call(&bor);
     }
 
     /// Generates Fr band operation
     pub fn fr_band(&mut self) {
-        let band = self.module_ref().fr().band.clone();
-        self.gen_call(&band);
+        panic!("Not implemented for fp256");
+        // let band = self.module_ref().fr().band.clone();
+        // self.gen_call(&band);
     }
 
     /// Generates Fr bxor operation
     pub fn fr_bxor(&mut self) {
-        let bxor = self.module_ref().fr().bxor.clone();
-        self.gen_call(&bxor);
+        panic!("Not implemented for fp256");
+        // let bxor = self.module_ref().fr().bxor.clone();
+        // self.gen_call(&bxor);
     }
 
     /// Generates Fr neg operation
     pub fn fr_neg(&mut self) {
-        let neg = self.module_ref().fr().neg.clone();
-        self.gen_call(&neg);
+        panic!("Not implemented for fp256");
+        // let neg = self.module_ref().fr().neg.clone();
+        // self.gen_call(&neg);
     }
 
     /// Generates Fr lnot operation
     pub fn fr_lnot(&mut self) {
-        let lnot = self.module_ref().fr().lnot.clone();
-        self.gen_call(&lnot);
+        panic!("Not implemented for fp256");
+        // let lnot = self.module_ref().fr().lnot.clone();
+        // self.gen_call(&lnot);
     }
 
     /// Generates Fr bnot operation
     pub fn fr_bnot(&mut self) {
-        let bnot = self.module_ref().fr().bnot.clone();
-        self.gen_call(&bnot);
+        panic!("Not implemented for fp256");
+        // let bnot = self.module_ref().fr().bnot.clone();
+        // self.gen_call(&bnot);
     }
 
     /// Generates saving Circom value located on top of stack to location specified
     /// in the second stack value
     pub fn gen_circom_store(&mut self) {
-        // calling copy function
-        let copy = self.module_ref().fr().copy.clone();
-        self.gen_call(&copy);
+        let fp256_set_fp256 = self.module_ref().ligetron().fp256_set_fp256.clone();
+        self.gen_call(&fp256_set_fp256);
     }
 
     /// Generates saving multiple Circom value located on top of stack to location specified
@@ -643,83 +685,23 @@ impl CircomFunction {
         if size == 1 {
             self.gen_circom_store();
         } else {
-            // calling copyn function
-            self.load_const(WASMType::I32, size as i64);
-            let copyn = self.module.borrow().fr().copyn.clone();
-            self.gen_call(&copyn);
+            panic!("Not implemented for fp256");
+            // // calling copyn function
+            // self.load_wasm_const(WASMType::I32, size as i64);
+            // let copyn = self.module.borrow().fr().copyn.clone();
+            // self.gen_call(&copyn);
         }
+    }
+
+    /// Generates assert equal operation
+    pub fn assert_equal(&mut self) {
+        let fp256_assert_equal = self.module_ref().ligetron().fp256_assert_equal.clone();
+        self.gen_call(&fp256_assert_equal);
     }
 
     /// Generates call to function passing values located on top of stack as parameters
     pub fn gen_call(&mut self, func_ref: &CircomFunctionRef) {
-        // first calculating number of stack values used in this call
-        let mut num_stack_vals: usize = func_ref.tp().params().len();
-        for ret_type in func_ref.tp().ret_types().iter().rev() {
-            match ret_type {
-                CircomValueType::WASM(_) => {
-                    // WASM return values don't require stack parameter
-                },
-                CircomValueType::FR => {
-                    num_stack_vals += 1;
-                },
-                CircomValueType::FRArray(_) => {
-                    num_stack_vals += 1;
-                }
-            }
-        }
-
-        // if num_stack_vals != 0 {
-        //     let mut stack_idx = num_stack_vals - 1;
-        //     let mut wasm_stack_loaded = false;
-
-        //     // loading pointers to FR return values to WASM stack
-        //     for _ in func_ref.tp().ret_types().iter().filter(|t| t.is_fr()) {
-        //         let stack_val = self.frame.top(stack_idx);
-        //         let stack_val_type = self.frame.value_type(&stack_val);
-        //         if !stack_val_type.is_fr() {
-        //             panic!("Function call return types mismatch");
-        //         }
-
-        //         // return value address may be already in WASM stack
-        //         if !stack_val.is_wasm_stack() {
-        //             self.frame.gen_wasm_stack_load_no_push(stack_val);
-        //             wasm_stack_loaded = true;
-        //         }
-
-        //         assert!(stack_idx > 0);
-        //         stack_idx -= 1;
-        //     }
-
-        //     // loading parameters to WASM stack
-        //     for _ in func_ref.tp().params() {
-        //         let stack_val = self.frame.top(stack_idx);
-        //         if stack_val.is_wasm_stack() {
-        //             if wasm_stack_loaded {
-        //                 // we can't (and don't want to) duplicate values located in WASM stack
-        //                 panic!("Duplicating WASM stack values is not supported");
-        //             }
-        //         } else {
-        //             self.frame.gen_wasm_stack_load_no_push(stack_val);
-        //         }
-        //         stack_idx -= 1;
-        //     }
-        // }
-
-        // Generating call instruction
-        self.func.borrow_mut().gen_call(&func_ref.to_wasm());
-
-        // removing parameter values from stack
-        self.frame.pop(num_stack_vals);
-
-        // adding WASM return values to stack
-        for ret_type in func_ref.tp().ret_types() {
-            match ret_type {
-                CircomValueType::WASM(wasm_type) => {
-                    self.frame.push_wasm_stack(wasm_type.clone());
-                },
-                _ => {}
-            }
-        }
+        self.frame.gen_call(func_ref);
     }
 
 

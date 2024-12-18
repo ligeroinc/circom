@@ -1,6 +1,5 @@
 
 mod entry;
-mod fr;
 mod func;
 mod ligetron;
 mod log;
@@ -15,12 +14,10 @@ pub use template::SignalKind;
 pub use template::SignalInfo;
 
 use entry::*;
-use fr::*;
 use func::*;
 use log::*;
 use module::*;
 use template::*;
-use stack::*;
 use types::*;
 use wasm::*;
 
@@ -76,8 +73,7 @@ impl LigetronProducer {
 
     /// Loads constant with specified index to stack
     pub fn load_const(&mut self, const_idx: usize) {
-        let addr = self.module_ref().constant_address(const_idx);
-        self.func().load_mem_const(CircomValueType::FR, addr);
+        self.func().load_const(const_idx);
     }
 
     /// Loads u32 constant with specified value to stack
@@ -285,9 +281,15 @@ impl LigetronProducer {
 
     /// Generates assert operation
     pub fn assert(&self) {
-        let assert_one = self.module_ref().ligetron().assert_one.clone();
-        self.func().gen_call(&self.module_ref().fr().is_true);
-        self.func().gen_call(&CircomFunctionRef::from_wasm(&assert_one));
+        panic!("Not implemented for fp256");
+        // let assert_one = self.module_ref().ligetron().assert_one.clone();
+        // self.func().gen_call(&self.module_ref().fr().is_true);
+        // self.func().gen_call(&CircomFunctionRef::from_wasm(&assert_one));
+    }
+
+    /// Generates assert equal operation
+    pub fn assert_equal(&self) {
+        self.func().assert_equal();
     }
 
     /// Returns reference to Circom module being generated
@@ -489,11 +491,12 @@ impl LigetronProducer {
 
     /// Generates conversion of stack top value to address
     pub fn to_address(&mut self) {
-        // converting value to address with Fr_toInt function
-        self.func().gen_call(&self.module_ref().fr().to_int);
+        panic!("Not implemented for fp256");
+        // // converting value to address with Fr_toInt function
+        // self.func().gen_call(&self.module_ref().fr().to_int);
 
-        // converting WASM I32 value to address
-        self.func().convert_index();
+        // // converting WASM I32 value to address
+        // self.func().convert_index();
     }
 
     /// Generates address add operation
@@ -512,8 +515,9 @@ impl LigetronProducer {
 
     /// Starts generating if-else block using current stack value as condition
     pub fn gen_if(&mut self) {
-        self.func().gen_call(&self.module_ref().fr().is_true);
-        self.func().gen_wasm_if();
+        panic!("Not implemented for fp256");
+        // self.func().gen_call(&self.module_ref().fr().is_true);
+        // self.func().gen_wasm_if();
     }
 
     /// Starts generating else block
@@ -539,9 +543,10 @@ impl LigetronProducer {
     /// Generates conditional exit from current loop using current FR value on stack
     /// as loop condition
     pub fn gen_loop_exit(&mut self) {
-        self.func().gen_call(&self.module_ref().fr().is_true);
-        self.func().gen_wasm_eqz(&WASMType::I32);
-        self.func().gen_wasm_loop_exit();
+        panic!("Not implemented for fp256");
+        // self.func().gen_call(&self.module_ref().fr().is_true);
+        // self.func().gen_wasm_eqz(&WASMType::I32);
+        // self.func().gen_wasm_loop_exit();
     }
 
 
@@ -565,18 +570,9 @@ impl LigetronProducer {
     pub fn log_val(&mut self) {
         self.func().gen_wasm_comment("logging value");
 
-        // loading value located on top of Circom logical stack on WASM stack
-        let val = self.func().get_frame().top(0);
-        //self.func().get_frame().gen_wasm_stack_load(val);
-
-        // loading size of FR value on WASM stack
-        self.func().gen_wasm_const(I32, (self.info.size_32_bit * 4) as i64);
-
-        // generating call to Ligetron dump_memory function
-        self.debug_dump_state("BEFORE dump_memory");
-        let dump_memory = self.module_ref().ligetron().dump_memory.clone();
-        self.func().gen_wasm_call(&dump_memory);
-        self.debug_dump_state("AFTER dump_memory");
+        // generating call to Ligetron fp256_print function
+        let fp256_print = self.module_ref().ligetron().fp256_print.clone();
+        self.func().gen_call(&fp256_print);
     }
 
 
@@ -596,13 +592,8 @@ impl LigetronProducer {
 
 impl Default for LigetronProducerInfo {
     fn default() -> Self {
-        let prime = BigInt::parse_bytes("21888242871839275222246405745257275088548364400416034343698204186575808495617".as_bytes(), 10)
-            .expect("can't parse prime");
         return LigetronProducerInfo {
-            prime: prime,
-            prime_str: "bn128".to_string(),
-            fr_memory_size: 1948,
-            size_32_bit: 8,
+            const_size: 32,
             templates: HashMap::new(),
             main_comp_id: 0,
             string_table: vec![],

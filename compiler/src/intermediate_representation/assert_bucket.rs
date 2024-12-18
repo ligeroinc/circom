@@ -72,11 +72,36 @@ impl GenerateLigetron for AssertBucket {
         producer.debug_dump_state("before assert bucket");
         producer.gen_comment("before assert bucket");
 
+        // only assert equal is supported for now in Ligetron
+        match self.evaluate.as_ref() {
+            Instruction::Compute(compute) => {
+                match compute.op {
+                    OperatorType::Eq(size) => {
+                        if size != 1 {
+                            panic!("Only assert equal of size 1 is supported for Ligetron");
+                        }
+
+                        for inst in &compute.stack {
+                            inst.generate_ligetron(producer);
+                        }
+                        producer.assert_equal();
+                    }
+                    _ => {
+                        panic!("Only assert equal is supported for Ligetron");                        
+                    }
+                }
+            }
+            _ => {
+                panic!("Only assert equal is supported for Ligetron");
+            }
+        }
+
         // generating code for calculating assert argument
-        self.evaluate.generate_ligetron(producer);
+        // TODO: enable when other comparison operations will be implemented in Ligetron
+        //self.evaluate.generate_ligetron(producer);
 
         // generating assert operation
-        producer.assert();
+        // producer.assert();
 
         producer.debug_dump_state("after assert bucket");
         producer.gen_comment("after assert bucket");
