@@ -73,12 +73,7 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
 
             match &addr_t {
                 AddressType::Variable => {
-                    // loading value reference
-                    if sz == 1 {
-                        producer.load_local_var_ref();
-                    } else {
-                        producer.load_local_var_array_ref(sz);
-                    }
+                    producer.load_local_var_ref(sz);
                 }
                 AddressType::Signal => {
                     producer.load_signal_ref(sz);

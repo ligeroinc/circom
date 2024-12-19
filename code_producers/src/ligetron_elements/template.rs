@@ -182,11 +182,11 @@ impl Template {
     pub fn new(module: Rc<RefCell<CircomModule>>,
                name: String,
                sig_info: &Vec<SignalInfo>,
-               n_local_vars: usize) -> Template {
+               locals_info: Vec<LocalVarInfo>) -> Template {
 
         // creating function generator for template run function
         let func_name = format!("{}_template", &name);
-        let mut func = CircomFunction::new(module.clone(), func_name, n_local_vars);
+        let mut func = CircomFunction::new(module.clone(), func_name, locals_info);
 
         // processing template signals
         let mut signals = Vec::<Signal>::new();
@@ -268,7 +268,6 @@ impl Template {
     }
 
     /// Loads reference to signal on stack using offset located on top of stack
-    /// and constant offset passed as parameter
     pub fn load_signal_ref(&mut self, sig: &SignalRef, size: usize) {
         let sig = &self.signals[sig.idx];
 

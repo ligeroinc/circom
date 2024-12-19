@@ -18,6 +18,7 @@ pub struct FunctionCodeInfo {
     pub body: InstructionList,
     pub max_number_of_vars: usize,
     pub max_number_of_ops_in_expression: usize,
+    pub variables: Vec<usize>,
 }
 
 impl ToString for FunctionCodeInfo {
@@ -101,8 +102,15 @@ impl GenerateLigetron for FunctionCodeInfo {
             panic!("NYI");
         };
 
+        // building local variables info
+        let local_vars = self.variables.iter().map(|sz| {
+            LocalVarInfo {
+                size: *sz
+            }
+        }).collect::<Vec<_>>();
+
         // starting new function
-        producer.new_function(&self.header, self.max_number_of_vars, ret_val_size);
+        producer.new_function(&self.header, local_vars, ret_val_size);
 
         // adding function parameters
         for par in &self.params {

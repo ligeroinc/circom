@@ -10,6 +10,11 @@ use std::rc::Rc;
 use std::cell::{RefCell, RefMut};
 
 
+pub struct LocalVarInfo {
+    pub size: usize
+}
+
+
 /// Represents current Circom function being generated
 pub struct CircomFunction {
     /// Reference to parent Circom module
@@ -24,9 +29,8 @@ pub struct CircomFunction {
     /// Circom stack frame
     frame: CircomStackFrame,
 
-    /// Reference to local variable containing array of FR values for all Circom
-    /// local variables
-    circom_locals_: CircomLocalVariableRef,
+    /// Array of Circom local variables referenced in Circom IR
+    circom_locals: Vec<CircomLocalVariableRef>,
 
     /// Should constant values be generated as address values instead of FR values
     const_addr_mode: bool,
@@ -36,7 +40,7 @@ impl CircomFunction {
     /// Constructs new function generator
     pub fn new(module: Rc<RefCell<CircomModule>>,
                name: String,
-               n_local_vars: usize) -> CircomFunction {
+               locals_info: Vec<LocalVarInfo>) -> CircomFunction {
 
         debug_log!("");
         debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
@@ -55,22 +59,35 @@ impl CircomFunction {
 
         let func_rc = Rc::new(RefCell::new(func));
 
-        let mut frame = CircomStackFrame::new(module.clone(), func_rc.clone(), mem_frame.clone());
+        let frame = CircomStackFrame::new(module.clone(), func_rc.clone(), mem_frame.clone());
 
-        // Allocating array of variables for Circom local variables. This is required
-        // because Circom compiler references all variables by index, and we can't detect
-        // real variable types (arrays vs values).
-        let circom_locals = frame.new_local_var(format!("circom_local_vars"),
-                                                CircomValueType::FRArray(n_local_vars));
-
-        return CircomFunction {
+        let mut func = CircomFunction {
             module: module,
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
             frame: frame,
-            circom_locals_: circom_locals,
+            circom_locals: vec![],
             const_addr_mode: false
         };
+
+        func.init(locals_info);
+
+        return func;
+    }
+
+    /// Initializes function
+    fn init(&mut self, locals_info: Vec<LocalVarInfo>) {
+        // Allocating Circom local variables
+        for (idx, loc_info) in locals_info.iter().enumerate() {
+            println!("LOCAL VAR {}: {}", idx, loc_info.size);
+            let tp = if loc_info.size == 1 {
+                CircomValueType::FR
+            } else {
+                CircomValueType::FRArray(loc_info.size)
+            };
+
+            let _ = self.new_circom_local_var(idx, tp);
+        }
     }
 
     /// Returns reference to parent Circom module
@@ -92,14 +109,6 @@ impl CircomFunction {
     pub fn set_export_name(&mut self, name: &str) {
         self.func.borrow_mut().set_export_name(name);
     }
-
-    // /// Generates initialization of FR local variables
-    // fn generate_fr_locals_init(&mut self) {
-    //     let stack_rc = Rc::new(RefCell::new(WASMStackState::new()));
-    //     let mut gen = InstructionGenerator::new(self.module_ref().wasm_module_rc().clone(),
-    //                                             self.func.borrow().frame_rc().clone(),
-    //                                             stack_rc);
-    // }
 
     /// Generates function code as list of instructions and appends them into module.
     /// Makes this instance invalid.
@@ -176,20 +185,23 @@ impl CircomFunction {
         return self.frame.new_local_var(name, tp);
     }
 
-    /// Returns reference to local variable with specified index
-    pub fn local_var(&self, idx: usize) -> CircomLocalVariableRef {
-        return self.frame.local_var(idx);
-    }
-
     /// Returns local variable type
     pub fn local_var_type(&self, var: &CircomLocalVariableRef) -> CircomValueType {
         return self.frame.local_var_type(var).clone();
     }
 
-    /// Returns reference to local variable containing array for all
-    /// preallocated Circom local variables
-    pub fn circom_locals(&self) -> CircomLocalVariableRef {
-        return self.circom_locals_.clone();
+    /// Creates new Circom local variable with specified variable index
+    pub fn new_circom_local_var(&mut self,
+                                idx: usize,
+                                tp: CircomValueType) -> CircomLocalVariableRef {
+        let var = self.new_local_var(format!("local_var_{}", idx), tp);
+        self.circom_locals.push(var.clone());
+        return var;
+    }
+
+    /// Returns reference to array of circom local variables referenced from IR by indexes
+    pub fn circom_locals(&self) -> &Vec<CircomLocalVariableRef> {
+        return &self.circom_locals;
     }
 
 

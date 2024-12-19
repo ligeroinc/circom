@@ -25,6 +25,7 @@ pub struct TemplateCodeInfo {
     pub wires: Vec<Wire>,
     pub body: InstructionList,
     pub var_stack_depth: usize,
+    pub variables: Vec<usize>,
     pub expression_stack_depth: usize,
     pub signal_stack_depth: usize, // Not used now
     pub number_of_components: usize,
@@ -168,8 +169,15 @@ impl GenerateLigetron for TemplateCodeInfo {
             signals.push(SignalInfo::new(kind, sig.size()));
         }
 
+        // building local variables info
+        let local_vars = self.variables.iter().map(|sz| {
+            LocalVarInfo {
+                size: *sz
+            }
+        }).collect::<Vec<_>>();
+
         // starting new template
-        producer.new_template(&self.header, &signals, self.var_stack_depth);
+        producer.new_template(&self.header, &signals, local_vars);
 
         // generating template body
         for inst in &self.body {

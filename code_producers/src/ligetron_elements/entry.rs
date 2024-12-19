@@ -12,9 +12,7 @@ use std::cell::RefCell;
 
 /// Generates entry function for module
 pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
-    use crate::wasm_elements::wasm_code_generator::wasm_hexa;
-
-    let mut func = CircomFunction::new(module.clone(), func_name.clone(), 0);
+    let mut func = CircomFunction::new(module.clone(), func_name.clone(), vec![]);
 
     let stack_ptr = module.borrow_mut().stack_ptr().clone();
 

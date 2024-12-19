@@ -124,6 +124,7 @@ fn build_template_instances(
         template_info.body = out.code;
         template_info.expression_stack_depth = out.expression_depth;
         template_info.var_stack_depth = out.stack_depth;
+        template_info.variables = out.variables;
         template_info.signal_stack_depth = out.signal_depth;
         string_table = out.string_table;
         cmp_id = out.next_cmp_id;
@@ -183,6 +184,12 @@ fn build_function_instances(
         function_info.body = out.code;
         function_info.max_number_of_ops_in_expression = out.expression_depth;
         function_info.max_number_of_vars = out.stack_depth;
+        function_info.variables = out.variables;
+
+        // removing parameters from list of variables
+        let parmas_count = function_info.params.len();
+        function_info.variables.drain(0 .. parmas_count);
+
         function_to_arena_size.insert(header, function_info.max_number_of_vars);
         circuit.add_function_code(function_info);
     }

@@ -10,6 +10,7 @@ mod template;
 mod types;
 mod wasm;
 
+use stack::CircomLocalVariableRef;
 pub use template::SignalKind;
 pub use template::SignalInfo;
 
@@ -22,6 +23,7 @@ use types::*;
 use wasm::*;
 
 pub use template::TemplateInfo;
+pub use func::LocalVarInfo;
 
 use WASMType::*;
 
@@ -91,62 +93,69 @@ impl LigetronProducer {
     // Local variables, parameters and return values
 
     /// Loads reference to local variable or parameter on stack
-    pub fn load_local_var_ref(&mut self) {
-        let circom_locals = self.func().circom_locals();
-
-        // calculating real offset of variable in array of all circom variables
-        if self.template_rc.is_some() {
-            // if we are generating template then variable index is real variable index
-            // because Circom compiler does not count input signals as function parameters
-            self.func().load_array_element_ref(&circom_locals);
-        } else {
+    /// using offset located on top of stack
+    pub fn load_local_var_ref(&mut self, size: usize) {
+        if self.template_rc.is_none() {
+            // If we are generating function then we have to take into account parameters count.
+            // This is not requried for tempaltes because Circom compiler think there is no
+            // parameters in template run function.
             let params_count = self.func().params_count();
             let offset = self.func().top_index_offset();
-
             if (offset as usize) < params_count {
                 // loading parmaeter
+                
                 if !self.func().top_index_is_const() {
-                    panic!("can't load parameter with not const index");
+                    panic!("can't load parameter with non const index");
+                }
+
+                if size != 1 {
+                    panic!("array parameters are not supported");
                 }
 
                 let par = self.func().param(offset as usize);
                 self.func().drop(1);
                 self.func().load_ref(&par);
+
+                return;
             } else {
                 // Decreasing address by number of parameters. That should be done
                 // in compile time in the stack manipulation logic.
                 self.func().load_const_index(-1 * (params_count as i32));
                 self.func().index_add();
-
-                // loading local variable
-                self.func().load_array_element_ref(&circom_locals);
             }
         }
-    }
 
-    /// Loads reference to array of local variables or parameter on stack
-    pub fn load_local_var_array_ref(&mut self, size: usize) {
-        let circom_locals = self.func().circom_locals();
+        // searching for local variable containing constant offset
 
-        if self.template_rc.is_some() {
-            // if we are generating template then variable index is real variable index
-            // because Circom compiler does not count input signals as function parameters
-            self.func().load_array_slice_ref(&circom_locals, size);
-        } else {
-            let params_count = self.func().params_count();
-            let offset = self.func().top_index_offset();
+        let circom_var_offset = self.func().top_index_offset() as usize;
+        let mut curr_idx: usize = 0;
+        let mut real_var_idx: usize = 0;
 
-            if (offset as usize) < params_count {
-                panic!("parameter arrays are not supported");
-            } else {
-                // Decreasing address by number of parameters. That should be done
-                // in compile time in the stack manipulation logic.
-                self.func().load_const_index(-1 * (params_count as i32));
+        loop {
+            let var = self.func().circom_locals()[real_var_idx].clone();
+            let var_size = match self.func().local_var_type(&var) {
+                CircomValueType::FR => 1,
+                CircomValueType::FRArray(size) => size,
+                CircomValueType::WASM(..) => 1
+            };
+
+            if curr_idx + var_size > circom_var_offset {
+                // Substracting offset located on top of stack.
+                // This should be done in compile time inside stack logic.
+                self.func().load_const_index((curr_idx as i32) * -1);
                 self.func().index_add();
 
-                // loading local variable array slice
-                self.func().load_array_slice_ref(&circom_locals, size);
+                if size == 1 {
+                    self.func().load_ref(&var);
+                } else {
+                    self.func().load_array_slice_ref(&var, size);
+                }
+
+                break;
             }
+
+            real_var_idx += 1;
+            curr_idx += var_size;
         }
     }
 
@@ -171,10 +180,10 @@ impl LigetronProducer {
     /// Starts generation of new function
     pub fn new_function(&mut self,
                         name: &str,
-                        n_local_vars: usize,
+                        locals_info: Vec<LocalVarInfo>,
                         ret_vals_size: usize) {
         assert!(self.func_.is_none());
-        let func = CircomFunction::new(self.module.clone(), name.to_string(), n_local_vars);
+        let func = CircomFunction::new(self.module.clone(), name.to_string(), locals_info);
         self.func_ = Some(Rc::new(RefCell::new(func)));
 
         // adding return values
@@ -204,18 +213,19 @@ impl LigetronProducer {
     }
 
     /// Starts generating new template
-    pub fn new_template(&mut self, name: &str,
+    pub fn new_template(&mut self,
+                        name: &str,
                         signals: &Vec<SignalInfo>,
-                        n_local_vars: usize) {
-        // creating new template generator
+                        locals_info: Vec<LocalVarInfo>) {
+        // creating new template
         assert!(self.template_rc.is_none());
         let tgen = Template::new(self.module.clone(),
                                  name.to_string(),
                                  signals,
-                                 n_local_vars);
+                                 locals_info);
         self.template_rc = Some(RefCell::new(tgen));
 
-        // saving reference to function generator created by template generator
+        // saving reference to function created by template
         assert!(self.func_.is_none());
         self.func_ = Some(self.template_rc.as_ref().unwrap().borrow_mut().func_rc());
     }

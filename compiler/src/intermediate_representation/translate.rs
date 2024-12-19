@@ -129,6 +129,7 @@ struct State {
     signal_stack: usize,
     variable_stack: usize,
     max_stack_depth: usize,
+    variables: Vec<usize>,
     fresh_cmp_id: usize,
     component_address_stack: usize,
     code: InstructionList,
@@ -153,6 +154,7 @@ impl State {
             environment: E::new(),
             message_id: msg_id,
             variable_stack: 0,
+            variables: vec![],
             signal_stack: 0,
             component_address_stack: 0,
             fresh_cmp_id: cmp_id_offset,
@@ -172,6 +174,7 @@ impl State {
     fn reserve_variable(&mut self, size: usize) -> usize {
         let ret = State::reserve(&mut self.variable_stack, size);
         self.max_stack_depth = std::cmp::max(self.max_stack_depth, self.variable_stack);
+        self.variables.push(size);
         ret
     }
 
@@ -1348,7 +1351,7 @@ impl ProcessedSymbol {
                 self.symbol_dimensions,
                 self.symbol_size,
                 self.bus_accesses,
-    self.before_signal, 
+                self.before_signal, 
             );            let xtype = match self.xtype {
                 TypeReduction::Variable => AddressType::Variable,
                 _ => AddressType::Signal,
@@ -1873,6 +1876,7 @@ pub struct CodeOutput {
     pub code: InstructionList,
     pub constant_tracker: FieldTracker,
     pub string_table: HashMap<String, usize>,
+    pub variables: Vec<usize>,
 }
 
 pub fn translate_code(body: Statement, code_info: CodeInfo) -> CodeOutput {
@@ -1906,7 +1910,6 @@ pub fn translate_code(body: Statement, code_info: CodeInfo) -> CodeOutput {
 
     let mut code = ir_processing::reduce_intermediate_operations(state.code);
     let expression_depth = ir_processing::build_auxiliary_stack(&mut code);
-    
 
     CodeOutput {
         code,
@@ -1915,7 +1918,8 @@ pub fn translate_code(body: Statement, code_info: CodeInfo) -> CodeOutput {
         stack_depth: state.max_stack_depth,
         signal_depth: state.signal_stack,
         constant_tracker: state.field_tracker,
-        string_table : state.string_table
+        string_table : state.string_table,
+        variables: state.variables
     }
 }
 

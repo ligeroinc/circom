@@ -401,6 +401,13 @@ impl CircomStackFrame {
     ////////////////////////////////////////////////////////////
     /// Local variables
 
+    /// Returns sequence of local variables
+    pub fn locals(&self) -> impl Iterator<Item = CircomLocalVariableRef> {
+        return (0 .. self.locals.len()).map(|idx| {
+            CircomLocalVariableRef::new(idx)
+        });
+    }
+
     /// Creates new local variable in stack frame
     pub fn new_local_var(&mut self, name: String, tp: CircomValueType) -> CircomLocalVariableRef {
         // allocating memory stack local
@@ -412,12 +419,6 @@ impl CircomStackFrame {
         self.locals.push(loc);
 
         return CircomLocalVariableRef::new(var_idx);
-    }
-
-    /// Returns reference to local variable with specified index
-    pub fn local_var(&self, idx: usize) -> CircomLocalVariableRef {
-        assert!(idx < self.locals.len());
-        return CircomLocalVariableRef::new(idx);
     }
 
     /// Returns local variable name
@@ -1403,8 +1404,7 @@ impl CircomStackFrame {
     /// Generates function exit code
     pub fn gen_func_exit(&mut self) {
         self.func.borrow_mut().gen_comment("deinitializing Fr local variables");
-        for i in 0 .. self.locals.len() {
-            let loc = self.local_var(i);
+        for loc in self.locals() {
             match self.local_var_type(&loc) {
                 CircomValueType::FR => {
                     self.load_ref(&loc);
