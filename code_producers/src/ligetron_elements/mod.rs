@@ -27,7 +27,6 @@ pub use func::LocalVarInfo;
 
 use WASMType::*;
 
-use num_bigint_dig::BigInt;
 use std::rc::Rc;
 use std::cell::{RefCell, Ref, RefMut};
 use std::collections::HashMap;
@@ -146,7 +145,12 @@ impl LigetronProducer {
                 self.func().index_add();
 
                 if size == 1 {
-                    self.func().load_ref(&var);
+                    if var_size == 1 {
+                        self.func().drop(1);
+                        self.func().load_ref(&var);
+                    } else {
+                        self.func().load_array_element_ref(&var);
+                    }
                 } else {
                     self.func().load_array_slice_ref(&var, size);
                 }

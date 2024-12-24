@@ -225,6 +225,22 @@ impl InstructionGenerator {
         self.stack().push(WASMType::I32);
     }
 
+    /// Generates eq instruction
+    pub fn gen_eq(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.stack().pop(tp);
+        self.gen_inst(&format!("{}.eq", tp.generate()));
+        self.stack().push(WASMType::I32);
+    }
+
+    /// Generates lt_u instruction
+    pub fn gen_lt_u(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.stack().pop(tp);
+        self.gen_inst(&format!("{}.lt_u", tp.generate()));
+        self.stack().push(WASMType::I32);
+    }
+
     /// Starts generating if-else block
     pub fn gen_if(&mut self) {
         self.stack().pop(&WASMType::I32);

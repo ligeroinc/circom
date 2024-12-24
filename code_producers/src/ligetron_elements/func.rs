@@ -33,7 +33,7 @@ pub struct CircomFunction {
     circom_locals: Vec<CircomLocalVariableRef>,
 
     /// Should constant values be generated as address values instead of FR values
-    const_addr_mode: bool,
+    const_addr_mode: bool
 }
 
 impl CircomFunction {
@@ -318,6 +318,11 @@ impl CircomFunction {
         return self.func.borrow_mut().new_named_local(name, tp);
     }
 
+    /// Adds new WASM local variable. Returns reference to variable.
+    pub fn new_wasm_local(&mut self, tp: WASMType) -> WASMLocalVariableRef {
+        return self.func.borrow_mut().new_wasm_local(tp);
+    }
+
     /// Creates new Circom function parameter with specified name
     pub fn new_circom_param(&mut self, name: &str) {
         self.frame.new_param(name.to_string(), CircomValueType::FR);
@@ -440,9 +445,26 @@ impl CircomFunction {
     }
 
     /// Generates eqz instruction
-    pub fn gen_wasm_eqz(&mut self, tp: &WASMType) {
-        self.frame.pop_wasm_stack(tp);
-        self.func.borrow_mut().gen_eqz(tp);
+    pub fn gen_wasm_eqz(&mut self, tp: WASMType) {
+        self.frame.pop_wasm_stack(&tp);
+        self.func.borrow_mut().gen_eqz(&tp);
+        self.frame.push_wasm_stack(WASMType::I32);
+    }
+
+    /// Generates eq instruction
+    pub fn gen_wasm_eq(&mut self, tp: WASMType) {
+        self.frame.pop_wasm_stack(&tp);
+        self.frame.pop_wasm_stack(&tp);
+        self.func.borrow_mut().gen_eq(&tp);
+        self.frame.push_wasm_stack(WASMType::I32);
+    }
+
+    /// Generates lt_u instruction
+    pub fn gen_wasm_lt_u(&mut self, tp: WASMType) {
+        self.frame.pop_wasm_stack(&tp);
+        self.frame.pop_wasm_stack(&tp);
+        self.func.borrow_mut().gen_lt_u(&tp);
+        self.frame.push_wasm_stack(WASMType::I32);
     }
 
     /// Generates load instruction
@@ -493,6 +515,7 @@ impl CircomFunction {
     /// Generates conditional exit from current loop
     pub fn gen_wasm_loop_exit(&mut self) {
         self.func.borrow_mut().gen_loop_exit();
+        self.frame.pop_wasm_stack(&WASMType::I32);
         self.frame.check_branch();
     }
 
@@ -697,11 +720,59 @@ impl CircomFunction {
         if size == 1 {
             self.gen_circom_store();
         } else {
-            panic!("Not implemented for fp256");
-            // // calling copyn function
-            // self.load_wasm_const(WASMType::I32, size as i64);
-            // let copyn = self.module.borrow().fr().copyn.clone();
-            // self.gen_call(&copyn);
+            // converting top stack values to WASM pointers
+            self.frame.convert_ref_to_wasm_ptr(0);
+            self.frame.convert_ref_to_wasm_ptr(1);
+
+            let dst_ptr_var = self.new_wasm_local(WASMType::PTR);
+            let src_ptr_var = self.new_wasm_local(WASMType::PTR);
+            let src_end_ptr_var = self.new_wasm_local(WASMType::PTR);
+
+            self.gen_wasm_comment(&format!("; store {} elements", size));
+
+            // saving src and dst pointers
+            self.gen_wasm_local_set(&src_ptr_var);
+            self.gen_wasm_local_set(&dst_ptr_var);
+
+            // calculating end source pointer
+            self.gen_wasm_local_get(&src_ptr_var);
+            self.gen_wasm_const(WASMType::I32, (size * CircomValueType::FR.size()) as i64);
+            self.gen_wasm_add(WASMType::PTR);
+            self.gen_wasm_local_set(&src_end_ptr_var);
+
+            self.debug_dump_state("BEFORE LOOP");
+
+            self.gen_wasm_loop_start();
+
+            // checking for loop exit
+            self.gen_wasm_local_get(&src_ptr_var);
+            self.gen_wasm_local_get(&src_end_ptr_var);
+            self.gen_wasm_eq(WASMType::PTR);
+            self.gen_wasm_loop_exit();
+
+            self.debug_dump_state("BEFORE COPY");
+
+            // copy function call
+            self.gen_wasm_local_get(&dst_ptr_var);
+            self.gen_wasm_local_get(&src_ptr_var);
+            let fp256_set_fp256 = self.module_ref().ligetron().fp256_set_fp256.to_wasm();
+            self.gen_wasm_call(&fp256_set_fp256);
+
+            self.debug_dump_state("AFTER COPY");
+
+            // incrementing src pointer
+            self.gen_wasm_local_get(&src_ptr_var);
+            self.gen_wasm_const(WASMType::I32, CircomValueType::FR.size() as i64);
+            self.gen_wasm_add(WASMType::PTR);
+            self.gen_wasm_local_set(&src_ptr_var);
+
+            // incrementing dst pointer
+            self.gen_wasm_local_get(&dst_ptr_var);
+            self.gen_wasm_const(WASMType::I32, CircomValueType::FR.size() as i64);
+            self.gen_wasm_add(WASMType::PTR);
+            self.gen_wasm_local_set(&dst_ptr_var);
+
+            self.gen_wasm_loop_end();
         }
     }
 

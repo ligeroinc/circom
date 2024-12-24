@@ -282,6 +282,16 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_eqz(tp);
     }
 
+    /// Generates eq instruction
+    pub fn gen_eq(&mut self, tp: &WASMType) {
+        self.inst_gen.borrow_mut().gen_eq(tp);
+    }
+
+    /// Generates lt_u instruction
+    pub fn gen_lt_u(&mut self, tp: &WASMType) {
+        self.inst_gen.borrow_mut().gen_lt_u(tp);
+    }
+
     /// Generates load instruction
     pub fn gen_load(&mut self, tp: WASMType) {
         self.inst_gen.borrow_mut().gen_load(tp);
