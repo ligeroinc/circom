@@ -654,13 +654,13 @@ fn translate_declaration(stmt: Statement, state: &mut State, context: &Context) 
 fn translate_block(stmt: Statement, state: &mut State, context: &Context) {
     use Statement::Block;
     if let Block { stmts, .. } = stmt {
-        let save_variable_address = state.variable_stack;
+//        let save_variable_address = state.variable_stack;
         state.environment.add_variable_block();
         for s in stmts {
             translate_statement(s, state, context);
         }
         state.environment.remove_variable_block();
-        state.variable_stack = save_variable_address;
+//        state.variable_stack = save_variable_address;
     } else {
         unreachable!()
     }

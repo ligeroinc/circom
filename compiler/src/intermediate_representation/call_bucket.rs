@@ -475,14 +475,15 @@ impl GenerateLigetron for CallBucket {
         match &self.return_info {
             ReturnType::Intermediate { .. } => {
                 // allocating result for call operation
-                producer.alloc_fr_result();
+                producer.alloc_result();
             }
             ReturnType::Final(data) => {
                 // loading reference to destination value
                 generate_ligetron_load_ref(producer,
                                            &data.dest,
                                            &data.dest_address_type,
-                                           &data.context.size);
+                                           &data.context.size,
+                                           true);
             }
         }
 

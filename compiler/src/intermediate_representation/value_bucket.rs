@@ -80,10 +80,10 @@ impl GenerateLigetron for ValueBucket {
 
         match self.parse_as {
             ValueType::U32 => {
-                producer.load_const_u32(self.value);
+                producer.load_u32_const(self.value);
             }
             ValueType::BigInt => {
-                producer.load_const(self.value);
+                producer.load_global_const(self.value);
             }
         }
 

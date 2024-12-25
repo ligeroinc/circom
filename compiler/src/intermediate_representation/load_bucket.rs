@@ -254,7 +254,11 @@ impl WriteWasm for LoadBucket {
 impl GenerateLigetron for LoadBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before load bucket");
-        generate_ligetron_load_ref(producer, &self.src, &self.address_type, &self.context.size);
+        generate_ligetron_load_ref(producer,
+                                   &self.src,
+                                   &self.address_type,
+                                   &self.context.size,
+                                   false);
         producer.debug_dump_state("after load bucket");
     }
 }

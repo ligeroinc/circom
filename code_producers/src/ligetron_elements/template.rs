@@ -268,11 +268,14 @@ impl Template {
     }
 
     /// Loads reference to signal on stack using offset located on top of stack
-    pub fn load_signal_ref(&mut self, sig: &SignalRef, size: usize) {
-        let sig = &self.signals[sig.idx];
+    pub fn load_signal_ref(&mut self, sig_ref: &SignalRef, size: usize) {
+        let sig = &self.signals[sig_ref.idx];
 
         if size == 1 {
-            if self.func().top_index_is_const() && self.func().top_index_offset() == 0 {
+            if self.func().top_index_is_const() &&
+               self.func().top_index_offset() == 0 &&
+               self.signal_size(&sig_ref) == 1 {
+
                 self.func().drop(1);
                 match sig {
                     Signal::Input(par) => {
@@ -425,11 +428,14 @@ impl Template {
             if curr_idx + sig_size > circom_signal_offset {
                 // Substracting offset located on top of stack.
                 // This should be done in compile time inside stack logic.
-                self.func().load_const_index((curr_idx as i32) * -1);
+                self.func().load_i32_const((curr_idx as i32) * -1);
                 self.func().index_add();
 
                 if size == 1 {
-                    if self.func().top_index_is_const() && self.func().top_index_offset() == 0 {
+                    if self.func().top_index_is_const() &&
+                       self.func().top_index_offset() == 0 &&
+                       sig_size == 1 {
+
                         self.func().drop(1);
                         self.func().load_ref(sig_var);
                     } else {

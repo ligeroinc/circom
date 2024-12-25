@@ -55,7 +55,8 @@ impl ToString for AddressType {
 pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                                   loc: &LocationRule,
                                   addr_t: &AddressType,
-                                  size: &SizeOption) {
+                                  size: &SizeOption,
+                                  for_store: bool) {
 
     let sz = match &size {
         SizeOption::Single(size) => *size,
@@ -67,13 +68,13 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
     match &loc {
         LocationRule::Indexed { location, .. } => {
             // generating code for calculating value index
-            let old_const_mode = producer.set_const_addr_mode(true);
+            let old_comp_type = producer.set_addr_computation_type();
             location.generate_ligetron(producer);
-            producer.set_const_addr_mode(old_const_mode);
+            producer.set_computation_type(old_comp_type);
 
             match &addr_t {
                 AddressType::Variable => {
-                    producer.load_local_var_ref(sz);
+                    producer.load_local_var_ref(sz, for_store);
                 }
                 AddressType::Signal => {
                     producer.load_signal_ref(sz);

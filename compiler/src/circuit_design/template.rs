@@ -5,6 +5,7 @@ use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;
 use code_producers::ligetron_elements::*;
 use program_structure::ast::SignalType;
+use super::function::build_variables_info;
 
 type TemplateID = usize;
 pub type TemplateCode = Box<TemplateCodeInfo>;
@@ -170,11 +171,7 @@ impl GenerateLigetron for TemplateCodeInfo {
         }
 
         // building local variables info
-        let local_vars = self.variables.iter().map(|sz| {
-            LocalVarInfo {
-                size: *sz
-            }
-        }).collect::<Vec<_>>();
+        let local_vars = build_variables_info(&self.body, &self.variables, 0);
 
         // starting new template
         producer.new_template(&self.header, &signals, local_vars);

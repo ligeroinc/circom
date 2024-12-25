@@ -6,12 +6,15 @@ use super::types::*;
 use super::wasm::*;
 use super::CircomModule;
 
+use num_bigint_dig::BigInt;
+
 use std::rc::Rc;
 use std::cell::{RefCell, RefMut};
 
 
 pub struct LocalVarInfo {
-    pub size: usize
+    pub size: usize,
+    pub is_32bit: bool,
 }
 
 
@@ -30,10 +33,7 @@ pub struct CircomFunction {
     frame: CircomStackFrame,
 
     /// Array of Circom local variables referenced in Circom IR
-    circom_locals: Vec<CircomLocalVariableRef>,
-
-    /// Should constant values be generated as address values instead of FR values
-    const_addr_mode: bool
+    circom_locals: Vec<CircomLocalVariableRef>
 }
 
 impl CircomFunction {
@@ -47,6 +47,10 @@ impl CircomFunction {
         debug_log!("CIRCOM FUNCTION BEGIN: {}", name);
         debug_log!("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
         debug_log!("");
+
+        for (idx, var) in locals_info.iter().enumerate() {
+            debug_log!("VAR {}: {}, {}", idx, var.is_32bit, var.size);
+        }
 
         // creating underlying WASM function
         let func = WASMFunction::new(module.borrow_mut().wasm_module_rc().clone(), name);
@@ -66,8 +70,7 @@ impl CircomFunction {
             func: func_rc.clone(),
             mem_frame_: mem_frame.clone(),
             frame: frame,
-            circom_locals: vec![],
-            const_addr_mode: false
+            circom_locals: vec![]
         };
 
         func.init(locals_info);
@@ -79,11 +82,18 @@ impl CircomFunction {
     fn init(&mut self, locals_info: Vec<LocalVarInfo>) {
         // Allocating Circom local variables
         for (idx, loc_info) in locals_info.iter().enumerate() {
-            println!("LOCAL VAR {}: {}", idx, loc_info.size);
-            let tp = if loc_info.size == 1 {
-                CircomValueType::FR
+            let tp = if loc_info.is_32bit {
+                if loc_info.size == 1 {
+                    CircomValueType::WASM(WASMType::I32)
+                } else {
+                    panic!("32bit arrays are not supported");
+                }
             } else {
-                CircomValueType::FRArray(loc_info.size)
+                if loc_info.size == 1 {
+                    CircomValueType::FR
+                } else {
+                    CircomValueType::FRArray(loc_info.size)
+                }
             };
 
             let _ = self.new_circom_local_var(idx, tp);
@@ -132,48 +142,39 @@ impl CircomFunction {
         self.module_ref().append_instruction(&mut self.func.borrow_mut().generate());
     }
 
-    /// Sets constant address mode flag. Returns previous flag value.
-    pub fn set_const_addr_mode(&mut self, val: bool) -> bool {
-        let res = self.const_addr_mode;
-        self.const_addr_mode = val;
-        return res;
-    }
 
-    /// Loads memory value at const address on sack
-    pub fn load_mem_const(&mut self, tp: CircomValueType, addr: usize) {
-        self.frame.load_mem_const(tp, addr);
-    }
+    ////////////////////////////////////////////////////////////
+    /// Constants
 
-    /// Loads WASM constant value on stack
+    /// Loads WASM constant value on WASM stack
     pub fn load_wasm_const(&mut self, tp: WASMType, val: i64) {
-        self.frame.load_const(tp, val);
+        self.frame.load_wasm_const(tp, val);
     }
 
-    /// Loads constant located in global memory onto stack
-    pub fn load_const(&mut self, const_idx: usize) {
+    /// Loads i32 const value on stack
+    pub fn load_i32_const(&mut self, val: i32) {
+        self.frame.load_i32_const(val);
+    }
+
+    /// Loads bigint const from global constant table
+    pub fn load_bigint_global_const(&mut self, const_idx: usize) {
         let addr = self.module_ref().constant_address(const_idx);
-
         let tmp_val = self.alloc_temp(CircomValueType::FR);
-
-        self.load_ref(&tmp_val);
-        self.load_wasm_const(WASMType::PTR, addr as i64);
+        self.load_temp_value_ptr_to_wasm_stack(&tmp_val);
+        self.gen_wasm_const(WASMType::PTR, addr as i64);
         let csize = self.module_ref().const_size();
-        self.load_wasm_const(WASMType::I32, csize as i64);
-        let fp256_from_hex = self.module_ref().ligetron().fp256_from_hex.clone();
-        self.gen_call(&fp256_from_hex);
+        self.gen_wasm_const(WASMType::I32, csize as i64);
+        let fp256_from_hex = self.module_ref().ligetron().fp256_from_hex.to_wasm();
+        self.gen_wasm_call(&fp256_from_hex);
     }
 
-    /// Loads U32 constant value on stack
-    pub fn load_const_u32(&mut self, val: usize) {
-        if self.const_addr_mode {
-            self.load_const_index(val as i32);
-        } else {
-            let tmp_val = self.alloc_temp(CircomValueType::FR);
-            self.load_ref(&tmp_val);
-            self.load_wasm_const(WASMType::I64, val as i64);
-            let fp256_set_ui = self.module_ref().ligetron().fp256_set_ui.clone();
-            self.gen_call(&fp256_set_ui);
-        }
+    /// Loads bigint const from i64 value
+    pub fn load_bigint_i64_const(&mut self, val: i64) {
+        let tmp_val = self.alloc_temp(CircomValueType::FR);
+        self.load_ref(&tmp_val);
+        self.load_wasm_const(WASMType::I64, val);
+        let fp256_set_ui = self.module_ref().ligetron().fp256_set_ui.clone();
+        self.gen_call(&fp256_set_ui);
     }
 
 
@@ -299,11 +300,6 @@ impl CircomFunction {
 
     ////////////////////////////////////////////////////////////
     /// Addresses and indexes
-
-    /// Loads const address on stack
-    pub fn load_const_index(&mut self, idx: i32) {
-        self.frame.load_const_index(idx);
-    }
 
     /// Converts current stack top value to address. The top of stack must be a WASM PTR value
     pub fn convert_index(&mut self) {
@@ -489,16 +485,166 @@ impl CircomFunction {
         self.frame.drop(count);
     }
 
-    /// Loads value stored in WASM local on top of stack
-    pub fn load_wasm_local(&mut self, loc: &WASMLocalVariableRef) {
-        let (_, tp) = self.func.borrow_mut().local(loc);
-        self.func.borrow_mut().gen_local_get(loc);
-        self.frame.push_wasm_stack(tp);
+
+    ////////////////////////////////////////////////////////////
+    // Integer operations
+
+    /// Generates int binary operation
+    fn gen_int_bin_op<Op: FnOnce(RefMut<WASMFunction>) -> ()>(&mut self, op: Op) {
+        let i32t = CircomValueType::WASM(WASMType::I32);
+        let types = vec![i32t.clone(), i32t.clone()];
+        self.frame.gen_op(types, false, op);
+
+        // adding result WASM value to logical stack
+        self.frame.push_wasm_stack(WASMType::I32);
+    }
+
+    /// Generates int comparison opearation
+    fn gen_int_cmp_op<Op: FnOnce(RefMut<WASMFunction>) -> ()>(&mut self, op: Op) {
+        let i32t = CircomValueType::WASM(WASMType::I32);
+        let types = vec![i32t.clone(), i32t.clone()];
+        self.frame.gen_op(types, false, op);
+    }
+
+    /// Generates int mul operation
+    pub fn gen_int_mul(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_mul(WASMType::I32);
+        });
+    }
+
+    /// Generates int div operation
+    pub fn gen_int_div(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_div_u(WASMType::I32);
+        });
+    }
+
+    /// Generates int add operation
+    pub fn gen_int_add(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_add(WASMType::I32);
+        });
+    }
+
+    /// Generates int sub operation
+    pub fn gen_int_sub(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_sub(WASMType::I32);
+        });
+    }
+
+    /// Generates int pow operation
+    pub fn gen_int_pow(&mut self) {
+        panic!("pow operation is not implemented yet for int");
+    }
+
+    /// Generates int mod operation
+    pub fn gen_int_mod(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_div_u(WASMType::I32);
+        });
+    }
+
+    /// Generates int shl operation
+    pub fn gen_int_shl(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_shl(WASMType::I32);
+        });
+    }
+
+    /// Generates int shr operation
+    pub fn gen_int_shr(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_shr_u(WASMType::I32);
+        });
+    }
+
+    /// Generates int leq operation
+    pub fn gen_int_leq(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_le_u(&WASMType::I32);
+        });
+    }
+
+    /// Generates int geq operation
+    pub fn gen_int_geq(&mut self) {
+        self.gen_int_bin_op(|mut func| {
+            func.gen_ge_u(&WASMType::I32);
+        });
+    }
+
+    /// Generates int lt operation
+    pub fn gen_int_lt(&mut self) {
+        self.gen_int_cmp_op(|mut func| {
+            func.gen_lt_u(&WASMType::I32);
+        });
+    }
+
+    /// Generates int gt operation
+    pub fn gen_int_gt(&mut self) {
+        self.gen_int_cmp_op(|mut func| {
+            func.gen_gt_u(&WASMType::I32);
+        });
+    }
+
+    /// Generates int eq operation
+    pub fn gen_int_eq(&mut self) {
+        self.gen_int_cmp_op(|mut func| {
+            func.gen_eq(&WASMType::I32);
+        });
+    }
+
+    /// Generates int neq operation
+    pub fn gen_int_neq(&mut self) {
+        self.gen_int_cmp_op(|mut func| {
+            func.gen_ne(&WASMType::I32);
+        });
+    }
+
+    /// Generates int lor operation
+    pub fn gen_int_lor(&mut self) {
+        panic!("lor operation is not supported for int types");
+    }
+
+    /// Generates int land operation
+    pub fn gen_int_land(&mut self) {
+        panic!("lor operation is not supported for int types");
+    }
+
+    /// Generates int bor operation
+    pub fn gen_int_bor(&mut self) {
+        panic!("bor operation is not supported for int types");
+    }
+
+    /// Generates int band operation
+    pub fn gen_int_band(&mut self) {
+        panic!("band operation is not supported for int types");
+    }
+
+    /// Generates int bxor operation
+    pub fn gen_int_bxor(&mut self) {
+        panic!("bxor operation is not supported for int types");
+    }
+
+    /// Generates int neg operation
+    pub fn gen_int_neg(&mut self) {
+        panic!("neg operation is not supported for int types");
+    }
+
+    /// Generates int lnot operation
+    pub fn gen_int_lnot(&mut self) {
+        panic!("lnot operation is not supported for int types");
+    }
+
+    /// Generates int bnot operation
+    pub fn gen_int_bnot(&mut self) {
+        panic!("bnot operation is not supported for int types");
     }
 
 
     ////////////////////////////////////////////////////////////
-    // Fr code generation
+    // Fr operations
 
     /// Allocates Fr value on stack for result of operation
     pub fn alloc_fr_result(&mut self) {
@@ -514,174 +660,197 @@ impl CircomFunction {
     //     self.frame.load_ref(&self.frame.top(0));
     // }
 
+    /// Generates Fr binary operation
+    fn gen_fr_bin_op(&mut self, op_func: WASMFunctionRef) {
+        let types = vec![CircomValueType::FR, CircomValueType::FR, CircomValueType::FR];
+        self.frame.gen_op(types, false, |mut func| {
+            func.gen_call(&op_func);
+        });
+    }
+
     /// Generates Fr mul operation
-    pub fn fr_mul(&mut self) {
-        let fp256_mulmod = self.module_ref().ligetron().fp256_mulmod.clone();
-        self.gen_call(&fp256_mulmod);
+    pub fn gen_fr_mul(&mut self) {
+        let func = self.module_ref().ligetron().fp256_mulmod.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr div operation
-    pub fn fr_div(&mut self) {
-        let fp256_divmod = self.module_ref().ligetron().fp256_divmod.clone();
-        self.gen_call(&fp256_divmod);
+    pub fn gen_fr_div(&mut self) {
+        let func = self.module_ref().ligetron().fp256_divmod.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr add operation
-    pub fn fr_add(&mut self) {
-        let fp256_addmod = self.module_ref().ligetron().fp256_addmod.clone();
-        self.gen_call(&fp256_addmod);
+    pub fn gen_fr_add(&mut self) {
+        let func = self.module_ref().ligetron().fp256_addmod.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr sub operation
-    pub fn fr_sub(&mut self) {
-        let fp256_submod = self.module_ref().ligetron().fp256_submod.clone();
-        self.gen_call(&fp256_submod);
+    pub fn gen_fr_sub(&mut self) {
+        let func = self.module_ref().ligetron().fp256_submod.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr pow operation
-    pub fn fr_pow(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_pow(&mut self) {
+        panic!("pow operation is not implemented for fp256 yet");
         // let pow = self.module_ref().fr().pow.clone();
         // self.gen_call(&pow);
     }
 
     /// Generates Fr idiv operation
-    pub fn fr_idiv(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_idiv(&mut self) {
+        panic!("idiv operation is not implemented for fp256 yet");
         // let idiv = self.module_ref().fr().idiv.clone();
         // self.gen_call(&idiv);
     }
 
     /// Generates Fr mod operation
-    pub fn fr_mod(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_mod(&mut self) {
+        panic!("mod operation is not implemented for fp256 yet");
         // let frmod = self.module_ref().fr().mod_.clone();
         // self.gen_call(&frmod);
     }
 
     /// Generates Fr shl operation
-    pub fn fr_shl(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_shl(&mut self) {
+        panic!("shl operation is not implemented for fp256 yet");
         // let shl = self.module_ref().fr().shl.clone();
         // self.gen_call(&shl);
     }
 
     /// Generates Fr shr operation
-    pub fn fr_shr(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_shr(&mut self) {
+        panic!("shr operation is not implemented for fp256 yet");
         // let shr = self.module_ref().fr().shr.clone();
         // self.gen_call(&shr);
     }
 
     /// Generates Fr leq operation
-    pub fn fr_leq(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_leq(&mut self) {
+        panic!("leq operation is not implemented for fp256 yet");
         // let leq = self.module_ref().fr().leq.clone();
         // self.gen_call(&leq);
     }
 
     /// Generates Fr geq operation
-    pub fn fr_geq(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_geq(&mut self) {
+        panic!("geq operation is not implemented for fp256 yet");
         // let geq = self.module_ref().fr().geq.clone();
         // self.gen_call(&geq);
     }
 
     /// Generates Fr lt operation
-    pub fn fr_lt(&mut self) {
-        panic!("Not implemented for fp256");
+    pub fn gen_fr_lt(&mut self) {
+        panic!("lt operation is not implemented for fp256 yet");
         // let lt = self.module_ref().fr().lt.clone();
         // self.gen_call(&lt);
     }
 
     /// Generates Fr gt operation
-    pub fn fr_gt(&mut self) {
+    pub fn gen_fr_gt(&mut self) {
         panic!("Not implemented for fp256");
         // let gt = self.module_ref().fr().gt.clone();
         // self.gen_call(&gt);
     }
 
     /// Generates Fr eq operation
-    pub fn fr_eq(&mut self) {
+    pub fn gen_fr_eq(&mut self) {
         let fp256_assert_equal = self.module_ref().ligetron().fp256_assert_equal.clone();
         self.gen_call(&fp256_assert_equal);
     }
 
     /// Generates Fr neq operation
-    pub fn fr_neq(&mut self) {
+    pub fn gen_fr_neq(&mut self) {
         panic!("Not implemented for fp256");
         // let neq = self.module_ref().fr().neq.clone();
         // self.gen_call(&neq);
     }
 
     /// Generates Fr lor operation
-    pub fn fr_lor(&mut self) {
+    pub fn gen_fr_lor(&mut self) {
         panic!("Not implemented for fp256");
         // let lor = self.module_ref().fr().lor.clone();
         // self.gen_call(&lor);
     }
 
     /// Generates Fr land operation
-    pub fn fr_land(&mut self) {
+    pub fn gen_fr_land(&mut self) {
         panic!("Not implemented for fp256");
         // let land = self.module_ref().fr().land.clone();
         // self.gen_call(&land);
     }
 
     /// Generates Fr bor operation
-    pub fn fr_bor(&mut self) {
+    pub fn gen_fr_bor(&mut self) {
         panic!("Not implemented for fp256");
         // let bor = self.module_ref().fr().bor.clone();
         // self.gen_call(&bor);
     }
 
     /// Generates Fr band operation
-    pub fn fr_band(&mut self) {
+    pub fn gen_fr_band(&mut self) {
         panic!("Not implemented for fp256");
         // let band = self.module_ref().fr().band.clone();
         // self.gen_call(&band);
     }
 
     /// Generates Fr bxor operation
-    pub fn fr_bxor(&mut self) {
+    pub fn gen_fr_bxor(&mut self) {
         panic!("Not implemented for fp256");
         // let bxor = self.module_ref().fr().bxor.clone();
         // self.gen_call(&bxor);
     }
 
     /// Generates Fr neg operation
-    pub fn fr_neg(&mut self) {
+    pub fn gen_fr_neg(&mut self) {
         panic!("Not implemented for fp256");
         // let neg = self.module_ref().fr().neg.clone();
         // self.gen_call(&neg);
     }
 
     /// Generates Fr lnot operation
-    pub fn fr_lnot(&mut self) {
+    pub fn gen_fr_lnot(&mut self) {
         panic!("Not implemented for fp256");
         // let lnot = self.module_ref().fr().lnot.clone();
         // self.gen_call(&lnot);
     }
 
     /// Generates Fr bnot operation
-    pub fn fr_bnot(&mut self) {
+    pub fn gen_fr_bnot(&mut self) {
         panic!("Not implemented for fp256");
         // let bnot = self.module_ref().fr().bnot.clone();
         // self.gen_call(&bnot);
     }
 
-    /// Generates saving Circom value located on top of stack to location specified
+    /// Generates store of int value located on top of stack to location specified
     /// in the second stack value
-    pub fn gen_circom_store(&mut self) {
-        let fp256_set_fp256 = self.module_ref().ligetron().fp256_set_fp256.clone();
-        self.gen_call(&fp256_set_fp256);
+    pub fn gen_int_store(&mut self) {
+        // generating store operation
+        // NOTE: passing true to gen_op function to indicate that first argument should
+        // be loaded as pointer
+        let types = vec![CircomValueType::WASM(WASMType::I32),
+                         CircomValueType::WASM(WASMType::I32)];
+        self.frame.gen_op(types, true, |mut func| {
+            func.gen_store(&WASMType::I32);
+        });
+    }
+
+    /// Generates store of Fr value located on top of stack to location specified
+    /// in the second stack value
+    pub fn gen_store_fr(&mut self) {
+        let fp256_set_fp256 = self.module_ref().ligetron().fp256_set_fp256.to_wasm();
+        self.frame.gen_op(vec![CircomValueType::FR, CircomValueType::FR], false, |mut func| {
+            func.gen_call(&fp256_set_fp256);
+        });
     }
 
     /// Generates saving multiple Circom value located on top of stack to location specified
     /// in the second stack value
-    pub fn gen_circom_store_n(&mut self, size: usize) {
+    pub fn gen_fr_store_n(&mut self, size: usize) {
         if size == 1 {
-            self.gen_circom_store();
+            self.gen_store_fr();
         } else {
             let src_ref = self.frame.top(0);
             let dst_ref = self.frame.top(1);
@@ -691,7 +860,7 @@ impl CircomFunction {
                 panic!("copy n supported only for bigint values");
             }
 
-            self.frame.load_values_to_wasm_stack(2);
+            self.frame.load_values_to_wasm_stack(2, CircomValueType::FR);
 
             let dst_ptr_var = self.new_wasm_local(WASMType::PTR);
             let src_ptr_var = self.new_wasm_local(WASMType::PTR);

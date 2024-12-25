@@ -277,6 +277,36 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_mul(tp);
     }
 
+    /// Generates div_u instruction
+    pub fn gen_div_u(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_div_u(tp);
+    }
+
+    /// Generates rem_u instruction
+    pub fn gen_rem_u(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_rem_u(tp);
+    }
+
+    /// Generates i64.extend_i32_u instruction
+    pub fn gen_i64_extend_i32_u(&mut self) {
+        self.inst_gen.borrow_mut().gen_i64_extend_i32_u();
+    }
+
+    /// Generates i64.extend_i32_s instruction
+    pub fn gen_i64_extend_i32_s(&mut self) {
+        self.inst_gen.borrow_mut().gen_i64_extend_i32_s();
+    }
+
+    /// Generates shl instruction
+    pub fn gen_shl(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_shl(tp);
+    }
+
+    /// Generates shr_u instruction
+    pub fn gen_shr_u(&mut self, tp: WASMType) {
+        self.inst_gen.borrow_mut().gen_shr_u(tp);
+    }
+
     /// Generates eqz instruction
     pub fn gen_eqz(&mut self, tp: &WASMType) {
         self.inst_gen.borrow_mut().gen_eqz(tp);
@@ -287,9 +317,29 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_eq(tp);
     }
 
+    /// Generates ne instruction
+    pub fn gen_ne(&mut self, tp: &WASMType) {
+        self.inst_gen.borrow_mut().gen_ne(tp);
+    }
+
     /// Generates lt_u instruction
     pub fn gen_lt_u(&mut self, tp: &WASMType) {
         self.inst_gen.borrow_mut().gen_lt_u(tp);
+    }
+
+    /// Generates le_u instruction
+    pub fn gen_le_u(&mut self, tp: &WASMType) {
+        self.inst_gen.borrow_mut().gen_le_u(tp);
+    }
+
+    /// Generates gt_u instruction
+    pub fn gen_gt_u(&mut self, tp: &WASMType) {
+        self.inst_gen.borrow_mut().gen_gt_u(tp);
+    }
+
+    /// Generates ge_u instruction
+    pub fn gen_ge_u(&mut self, tp: &WASMType) {
+        self.inst_gen.borrow_mut().gen_ge_u(tp);
     }
 
     /// Generates load instruction

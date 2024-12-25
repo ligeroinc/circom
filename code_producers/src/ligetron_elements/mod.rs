@@ -10,7 +10,6 @@ mod template;
 mod types;
 mod wasm;
 
-use stack::CircomLocalVariableRef;
 pub use template::SignalKind;
 pub use template::SignalInfo;
 
@@ -26,6 +25,8 @@ pub use template::TemplateInfo;
 pub use func::LocalVarInfo;
 
 use WASMType::*;
+
+use num_bigint_dig::BigInt;
 
 use std::rc::Rc;
 use std::cell::{RefCell, Ref, RefMut};
@@ -46,7 +47,10 @@ pub struct LigetronProducer {
     func_: Option<Rc<RefCell<CircomFunction>>>,
 
     /// Generator for current template being generated
-    template_rc: Option<RefCell<Template>>
+    template_rc: Option<RefCell<Template>>,
+
+    /// Type of current computation mode (FR or WASM type)
+    computation_type: CircomValueType
 }
 
 impl LigetronProducer {
@@ -66,42 +70,138 @@ impl LigetronProducer {
             module,
             func_: None,
             template_rc: None,
+            computation_type: CircomValueType::FR
         };
     }
+
+    /// Sets current computation type. Returns previous type
+    pub fn set_computation_type(&mut self, tp: CircomValueType) -> CircomValueType {
+        let res = self.computation_type.clone();
+        self.computation_type = tp;
+        return res;
+    }
+
+    /// Sets current computation type for address. Returns previous computation type
+    pub fn set_addr_computation_type(&mut self) -> CircomValueType {
+        return self.set_computation_type(CircomValueType::WASM(WASMType::I32));
+    }
+
+    /// Sets current computation type to Fr. Returns previous computation type.
+    pub fn set_fr_computation_type(&mut self) -> CircomValueType {
+        return self.set_computation_type(CircomValueType::FR);
+    }
+
+    /// Sets current computation type to integer. Returns previous computation type.
+    pub fn set_int_computation_type(&mut self) -> CircomValueType {
+        return self.set_computation_type(CircomValueType::WASM(WASMType::I32));
+    }
+
+    /// Returns true if current computation type is I32 or I64
+    fn is_computation_type_wasm(&self) -> bool {
+        match &self.computation_type {
+            CircomValueType::WASM(..) => true,
+            _ => false
+        }
+    }
+
+    /// Returns true if current computation type is FR
+    fn is_computation_type_fr(&self) -> bool {
+        match &self.computation_type {
+            CircomValueType::FR => true,
+            _ => false
+        }
+    }
+
 
     ////////////////////////////////////////////////////////////
     // Constants
 
-    /// Loads constant with specified index to stack
-    pub fn load_const(&mut self, const_idx: usize) {
-        self.func().load_const(const_idx);
+    /// Loads constant from global constant table with specified index to stack
+    pub fn load_global_const(&mut self, const_idx: usize) {
+        if self.is_computation_type_wasm() {
+            let const_str = self.module_ref().constants()[const_idx].clone();
+            let const_val = const_str.parse::<i32>().unwrap();
+            self.func().load_i32_const(const_val);
+        } else {
+            self.func().load_bigint_global_const(const_idx);
+        }
     }
 
     /// Loads u32 constant with specified value to stack
-    pub fn load_const_u32(&mut self, val: usize) {
-        self.func().load_const_u32(val);
-    }
-
-    /// Sets constant address mode flag. Returns previous flag value.
-    pub fn set_const_addr_mode(&mut self, val: bool) -> bool {
-        return self.func().set_const_addr_mode(val);
+    pub fn load_u32_const(&mut self, val: usize) {
+        if self.is_computation_type_wasm() {
+            self.func().load_i32_const(val as i32);
+        } else {
+            self.func().load_bigint_i64_const(val as i64);
+        }
     }
 
 
     ////////////////////////////////////////////////////////////
     // Local variables, parameters and return values
 
-    /// Loads reference to local variable or parameter on stack
-    /// using offset located on top of stack
-    pub fn load_local_var_ref(&mut self, size: usize) {
+    /// Returns true if global constant can be represented as 32bit
+    pub fn is_global_const_32bit(&self, idx: usize) -> bool {
+        let val = self.info.field_tracking[idx].parse::<BigInt>().unwrap();
+        let min_int = BigInt::from(-2147483648);
+        let max_int = BigInt::from(2147483647);
+        return min_int <= val && val <= max_int;
+    }
+
+    /// Returns true if local variable with specified index is 32bit
+    pub fn is_local_var_32bit(&self, mut circom_idx: usize) -> bool {
         if self.template_rc.is_none() {
             // If we are generating function then we have to take into account parameters count.
-            // This is not requried for tempaltes because Circom compiler think there is no
+            // This is not requried for tempaltes because Circom compiler thinks there is no
+            // parameters in template run function.
+            let params_count = self.func().params_count();
+            if circom_idx < params_count {
+                // all function parameters are bigint values
+                return false;
+            } else {
+                // Decreasing variable number by number of parameters
+                circom_idx -= params_count;
+            }
+        }
+
+        // searching for local variable containing specified index
+
+        let circom_var_offset = circom_idx;
+        let mut curr_idx: usize = 0;
+        let mut real_var_idx: usize = 0;
+
+        loop {
+            let var = self.func().circom_locals()[real_var_idx].clone();
+            let var_size = match self.func().local_var_type(&var) {
+                CircomValueType::FR => 1,
+                CircomValueType::FRArray(size) => size,
+                CircomValueType::WASM(..) => 1
+            };
+
+            if curr_idx + var_size > circom_var_offset {
+                return self.func().local_var_type(&var).is_wasm();
+            }
+
+            real_var_idx += 1;
+            curr_idx += var_size;
+        }
+    }
+
+    /// Loads reference to local variable or parameter on stack
+    /// using offset located on top of stack
+    pub fn load_local_var_ref(&mut self, size: usize, for_store: bool) {
+        if self.template_rc.is_none() {
+            // If we are generating function then we have to take into account parameters count.
+            // This is not requried for tempaltes because Circom compiler thinks there is no
             // parameters in template run function.
             let params_count = self.func().params_count();
             let offset = self.func().top_index_offset();
             if (offset as usize) < params_count {
                 // loading parmaeter
+
+                if for_store {
+                    panic!("can't load parameter reference for store");
+                }
                 
                 if !self.func().top_index_is_const() {
                     panic!("can't load parameter with non const index");
@@ -119,7 +219,7 @@ impl LigetronProducer {
             } else {
                 // Decreasing address by number of parameters. That should be done
                 // in compile time in the stack manipulation logic.
-                self.func().load_const_index(-1 * (params_count as i32));
+                self.func().load_i32_const(-1 * (params_count as i32));
                 self.func().index_add();
             }
         }
@@ -141,7 +241,7 @@ impl LigetronProducer {
             if curr_idx + var_size > circom_var_offset {
                 // Substracting offset located on top of stack.
                 // This should be done in compile time inside stack logic.
-                self.func().load_const_index((curr_idx as i32) * -1);
+                self.func().load_i32_const((curr_idx as i32) * -1);
                 self.func().index_add();
 
                 if size == 1 {
@@ -153,6 +253,13 @@ impl LigetronProducer {
                     }
                 } else {
                     self.func().load_array_slice_ref(&var, size);
+                }
+
+                // if we are loading reference for store then
+                // computation type according to variable type
+                if for_store {
+                    let var_type = self.func().local_var_type(&var);
+                    self.set_computation_type(var_type);
                 }
 
                 break;
@@ -259,7 +366,7 @@ impl LigetronProducer {
             if curr_idx + sig_size > circom_signal_offset {
                 // Substracting offset located on top of stack.
                 // This should be done in compile time inside stack logic.
-                self.func().load_const_index((curr_idx as i32) * -1);
+                self.func().load_i32_const((curr_idx as i32) * -1);
                 self.func().index_add();
                 self.template().load_signal_ref(&sig, size);
 
@@ -346,13 +453,25 @@ impl LigetronProducer {
     /// Generates saving Circom value located on top of stack to location specified
     /// in the second stack value
     pub fn store(&mut self) {
-        self.func().gen_circom_store();
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_store();
+        } else {
+            self.func().gen_store_fr();
+        }
     }
 
     /// Generates saving multiple Circom value located on top of stack to location specified
     /// in the second stack value
     pub fn store_n(&mut self, size: usize) {
-        self.func().gen_circom_store_n(size);
+        if size == 1 {
+            self.store();
+        } else {
+            if self.is_computation_type_wasm() {
+                panic!("store n is not supported for wasm types");
+            } else {
+                self.func().gen_fr_store_n(size);
+            }
+        }
     }
 
     /// Drops value from stack
@@ -360,129 +479,221 @@ impl LigetronProducer {
         self.func().drop(1);
     }
 
-    /// Allocates Fr value on stack for result of operation
-    pub fn alloc_fr_result(&mut self) {
-        self.func().alloc_fr_result();
+    /// Allocates value of stack for result of computation depending on current
+    /// computation type
+    pub fn alloc_result(&mut self) {
+        if self.is_computation_type_wasm() {
+            // we don't need to allocate result for WASM computations
+        } else {
+            self.func().alloc_fr_result();
+        }
     }
 
-    /// Reloads allocted on stack Fr value for result operation
-    // pub fn reload_fr_result(&mut self) {
-    //     self.func().reload_fr_result();
-    // }
-
-    /// Generates Fr mul operation
-    pub fn fr_mul(&mut self) {
-        self.func().fr_mul();
+    /// Generates mul operation
+    pub fn gen_mul(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_mul();
+        } else {
+            self.func().gen_fr_mul();
+        }
     }
 
-    /// Generates Fr div operation
-    pub fn fr_div(&mut self) {
-        self.func().fr_div();
+    /// Generates div operation
+    pub fn gen_div(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_div();
+        } else {
+            self.func().gen_fr_div();
+        }
     }
 
-    /// Generates Fr add operation
-    pub fn fr_add(&mut self) {
-        self.func().fr_add();
+    /// Generates add operation
+    pub fn gen_add(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_add();
+        } else {
+            self.func().gen_fr_add();
+        }
     }
 
-    /// Generates Fr sub operation
-    pub fn fr_sub(&mut self) {
-        self.func().fr_sub();
+    /// Generates sub operation
+    pub fn gen_sub(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_sub();
+        } else {
+            self.func().gen_fr_sub();
+        }
     }
 
-    /// Generates Fr pow operation
-    pub fn fr_pow(&mut self) {
-        self.func().fr_pow();
+    /// Generates pow operation
+    pub fn gen_pow(&mut self) {
+        if self.is_computation_type_wasm() {
+            panic!("pow operation is not supported for wasm types");
+        } else {
+            self.func().gen_fr_pow();
+        }
     }
 
-    /// Generates Fr idiv operation
-    pub fn fr_idiv(&mut self) {
-        self.func().fr_idiv();
+    /// Generates idiv operation
+    pub fn gen_idiv(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_div();
+        } else {
+            self.func().gen_fr_idiv();
+        }
     }
 
-    /// Generates Fr mod operation
-    pub fn fr_mod(&mut self) {
-        self.func().fr_mod();
+    /// Generates mod operation
+    pub fn gen_mod(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_mod();
+        } else {
+            self.func().gen_fr_mod();
+        }
     }
 
-    /// Generates Fr shl operation
-    pub fn fr_shl(&mut self) {
-        self.func().fr_shl();
+    /// Generates shl operation
+    pub fn gen_shl(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_shl();
+        } else {
+            self.func().gen_fr_shl();
+        }
     }
 
-    /// Generates Fr shr operation
-    pub fn fr_shr(&mut self) {
-        self.func().fr_shr();
+    /// Generates shr operation
+    pub fn gen_shr(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_shr();
+        } else {
+            self.func().gen_fr_shr();
+        }
     }
 
     /// Generates Fr leq operation
-    pub fn fr_leq(&mut self) {
-        self.func().fr_leq();
+    pub fn gen_leq(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_leq();
+        } else {
+            self.func().gen_fr_leq();
+        }
     }
 
     /// Generates Fr geq operation
-    pub fn fr_geq(&mut self) {
-        self.func().fr_geq();
+    pub fn gen_geq(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_geq();
+        } else {
+            self.func().gen_fr_geq();
+        }
     }
 
     /// Generates Fr lt operation
-    pub fn fr_lt(&mut self) {
-        self.func().fr_lt();
+    pub fn gen_lt(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_lt();
+        } else {
+            self.func().gen_fr_lt();
+        }
     }
 
     /// Generates Fr gt operation
-    pub fn fr_gt(&mut self) {
-        self.func().fr_gt();
+    pub fn gen_gt(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_gt();
+        } else {
+            self.func().gen_fr_gt();
+        }
     }
 
     /// Generates Fr eq operation
-    pub fn fr_eq(&mut self) {
-        self.func().fr_eq();
+    pub fn gen_eq(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_eq();
+        } else {
+            self.func().gen_fr_eq();
+        }
     }
 
     /// Generates Fr neq operation
-    pub fn fr_neq(&mut self) {
-        self.func().fr_neq();
+    pub fn gen_neq(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_neq();
+        } else {
+            self.func().gen_fr_neq();
+        }
     }
 
     /// Generates Fr lor operation
-    pub fn fr_lor(&mut self) {
-        self.func().fr_lor();
+    pub fn gen_lor(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_lor();
+        } else {
+            self.func().gen_fr_lor();
+        }
     }
 
     /// Generates Fr land operation
-    pub fn fr_land(&mut self) {
-        self.func().fr_land();
+    pub fn gen_land(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_land();
+        } else {
+            self.func().gen_fr_land();
+        }
     }
 
     /// Generates Fr bor operation
-    pub fn fr_bor(&mut self) {
-        self.func().fr_bor();
+    pub fn gen_bor(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_bor();
+        } else {
+            self.func().gen_fr_bor();
+        }
     }
 
     /// Generates Fr band operation
-    pub fn fr_band(&mut self) {
-        self.func().fr_band();
+    pub fn gen_band(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_band();
+        } else {
+            self.func().gen_fr_band();
+        }
     }
 
     /// Generates Fr bxor operation
-    pub fn fr_bxor(&mut self) {
-        self.func().fr_bxor();
+    pub fn gen_bxor(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_bxor();
+        } else {
+            self.func().gen_fr_bxor();
+        }
     }
 
     /// Generates Fr neg operation
-    pub fn fr_neg(&mut self) {
-        self.func().fr_neg();
+    pub fn gen_neg(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_neg();
+        } else {
+            self.func().gen_fr_neg();
+        }
     }
 
     /// Generates Fr lnot operation
-    pub fn fr_lnot(&mut self) {
-        self.func().fr_lnot();
+    pub fn gen_lnot(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_lnot();
+        } else {
+            self.func().gen_fr_lnot();
+        }
     }
 
     /// Generates Fr bnot operation
-    pub fn fr_bnot(&mut self) {
-        self.func().fr_bnot();
+    pub fn gen_bnot(&mut self) {
+        if self.is_computation_type_wasm() {
+            self.func().gen_int_bnot();
+        } else {
+            self.func().gen_fr_bnot();
+        }
     }
 
     /// Generates call operation
@@ -505,12 +716,12 @@ impl LigetronProducer {
 
     /// Generates conversion of stack top value to address
     pub fn to_address(&mut self) {
-        panic!("Not implemented for fp256");
-        // // converting value to address with Fr_toInt function
-        // self.func().gen_call(&self.module_ref().fr().to_int);
-
-        // // converting WASM I32 value to address
-        // self.func().convert_index();
+        if self.is_computation_type_fr() {
+            panic!("conversion to address should be done in 32bit mode");
+        } else {
+            // converting WASM I32 value to address
+            self.func().convert_index();
+        }
     }
 
     /// Generates address add operation
@@ -557,10 +768,15 @@ impl LigetronProducer {
     /// Generates conditional exit from current loop using current FR value on stack
     /// as loop condition
     pub fn gen_loop_exit(&mut self) {
-        panic!("Not implemented for fp256");
-        // self.func().gen_call(&self.module_ref().fr().is_true);
-        // self.func().gen_wasm_eqz(&WASMType::I32);
-        // self.func().gen_wasm_loop_exit();
+        if self.is_computation_type_fr() {
+            panic!("Not implemented for fp256");
+            // self.func().gen_call(&self.module_ref().fr().is_true);
+            // self.func().gen_wasm_eqz(&WASMType::I32);
+            // self.func().gen_wasm_loop_exit();
+        } else {
+            self.func().gen_wasm_eqz(WASMType::I32);
+            self.func().gen_wasm_loop_exit();
+        }
     }
 
 
@@ -596,6 +812,7 @@ impl LigetronProducer {
     /// Dumps current generator state for debugging
     pub fn debug_dump_state(&self, stage: &str) {
         self.func().debug_dump_state(stage);
+        debug_log!("32BIT: {}", !self.is_computation_type_fr());
     }
 
     /// Dumps current stack contents to string

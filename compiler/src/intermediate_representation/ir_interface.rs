@@ -16,6 +16,8 @@ pub use super::log_bucket::LogBucketArg;
 pub use super::types::{InstrContext, ValueType, SizeOption};
 pub use super::value_bucket::ValueBucket;
 
+pub use super::compute_bucket::compute_op_propagates_32bit_down;
+
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::wasm_elements::*;

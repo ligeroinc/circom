@@ -129,6 +129,7 @@ class WitnessCalculator {
     }
 
     async _doCalculateWitness(input_orig, sanityCheck) {
+			console.log("INPUT ORIG: " + input_orig.toString());
 	//input is assumed to be a map from signals to arrays of bigints
         this.instance.exports.init((this.sanityCheck || sanityCheck) ? 1 : 0);
 	let prefix = "";
@@ -142,6 +143,7 @@ class WitnessCalculator {
             const h = fnvHash(k);
             const hMSB = parseInt(h.slice(0,8), 16);
             const hLSB = parseInt(h.slice(8,16), 16);
+						console.log("INPUT FOR KEY " + k + ": " + input[k].toString());
             const fArr = flatArray(input[k]);
 	    let signalSize = this.instance.exports.getInputSignalSize(hMSB, hLSB);
 	    if (signalSize < 0){
@@ -153,20 +155,20 @@ class WitnessCalculator {
 	    if (fArr.length > signalSize) {
 		throw new Error(`Too many values for input signal ${k}\n`);
 	    }
-            for (let i=0; i<fArr.length; i++) {
-                const arrFr = toArray32(normalize(fArr[i],this.prime),this.n32)
-                for (let j=0; j<this.n32; j++) {
-		    this.instance.exports.writeSharedRWMemory(j,arrFr[this.n32-1-j]);
-		}
-		try {
+          for (let i=0; i<fArr.length; i++) {
+						console.log("ARR: " + i.toString() + ", " + fArr[i]);
+            const arrFr = toArray32(normalize(fArr[i],this.prime),this.n32)
+            for (let j=0; j<this.n32; j++) {
+		    			this.instance.exports.writeSharedRWMemory(j,arrFr[this.n32-1-j]);
+						}
+						try {
                     this.instance.exports.setInputSignal(hMSB, hLSB,i);
-		    input_counter++;
-		} catch (err) {
-		    // console.log(`After adding signal ${i} of ${k}`)
-                    throw new Error(err);
-		}
-            }
-
+		    			input_counter++;
+						} catch (err) {
+							// console.log(`After adding signal ${i} of ${k}`)
+							throw new Error(err);
+						}
+          }
         });
 	if (input_counter < this.instance.exports.getInputSize()) {
 	    throw new Error(`Not all inputs have been set. Only ${input_counter} out of ${this.instance.exports.getInputSize()}`);
@@ -174,6 +176,7 @@ class WitnessCalculator {
     }
 
     async calculateWitness(input, sanityCheck) {
+			  console.log("CALCULATE WITNESS INPUT: " + input.toString());
 
         const w = [];
         await this._doCalculateWitness(input, sanityCheck);

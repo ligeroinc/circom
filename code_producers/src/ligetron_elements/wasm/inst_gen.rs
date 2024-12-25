@@ -204,6 +204,72 @@ impl InstructionGenerator {
         self.gen_inst(&format!("{}.mul", type_.generate()));
     }
 
+    /// Generates div_u instruction
+    pub fn gen_div_u(&mut self, type_: WASMType) {
+        if type_ == WASMType::PTR {
+            self.stack().pop_ptr_ops();
+        } else {
+            self.stack().pop(&type_);
+            self.stack().pop(&type_);
+        }
+        self.stack().push(type_);
+
+        self.gen_inst(&format!("{}.div_u", type_.generate()));
+    }
+
+    /// Generates rem_u instruction
+    pub fn gen_rem_u(&mut self, type_: WASMType) {
+        if type_ == WASMType::PTR {
+            panic!("rem_u instruction is not supported for ptr types");
+        }
+
+        self.stack().pop(&type_);
+        self.stack().pop(&type_);
+        self.stack().push(type_);
+
+        self.gen_inst(&format!("{}.rem_u", type_.generate()));
+    }
+
+    /// Generates i64.extend_i32_u instruction
+    pub fn gen_i64_extend_i32_u(&mut self) {
+        self.stack().pop(&WASMType::I32);
+        self.stack().push(WASMType::I64);
+        self.gen_inst(&format!("i64.extend_i32_u"));
+    }
+
+    /// Generates i64.extend_i32_s instruction
+    pub fn gen_i64_extend_i32_s(&mut self) {
+        self.stack().pop(&WASMType::I32);
+        self.stack().push(WASMType::I64);
+        self.gen_inst(&format!("i64.extend_i32_s"));
+    }
+
+    /// Generates shl instruction
+    pub fn gen_shl(&mut self, type_: WASMType) {
+        if type_ == WASMType::PTR {
+            panic!("shl instruction is not supported for ptr types");
+        }
+
+        self.stack().pop(&type_);
+        self.stack().pop(&type_);
+        self.stack().push(type_);
+
+        self.gen_inst(&format!("{}.shl", type_.generate()));
+    }
+
+    /// Generates shr_u instruction
+    pub fn gen_shr_u(&mut self, type_: WASMType) {
+        if type_ == WASMType::PTR {
+            panic!("shr_u instruction is not supported for ptr types");
+        }
+
+        self.stack().pop(&type_);
+        self.stack().pop(&type_);
+        self.stack().push(type_);
+
+        self.gen_inst(&format!("{}.shr_u", type_.generate()));
+    }
+
     /// Generates load instruction
     pub fn gen_load(&mut self, tp: WASMType) {
         self.stack().pop(&WASMType::PTR);
@@ -233,11 +299,43 @@ impl InstructionGenerator {
         self.stack().push(WASMType::I32);
     }
 
+    /// Generates ne instruction
+    pub fn gen_ne(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.stack().pop(tp);
+        self.gen_inst(&format!("{}.ne", tp.generate()));
+        self.stack().push(WASMType::I32);
+    }
+
     /// Generates lt_u instruction
     pub fn gen_lt_u(&mut self, tp: &WASMType) {
         self.stack().pop(tp);
         self.stack().pop(tp);
         self.gen_inst(&format!("{}.lt_u", tp.generate()));
+        self.stack().push(WASMType::I32);
+    }
+
+    /// Generates le_u instruction
+    pub fn gen_le_u(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.stack().pop(tp);
+        self.gen_inst(&format!("{}.le_u", tp.generate()));
+        self.stack().push(WASMType::I32);
+    }
+
+    /// Generates gt_u instruction
+    pub fn gen_gt_u(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.stack().pop(tp);
+        self.gen_inst(&format!("{}.gt_u", tp.generate()));
+        self.stack().push(WASMType::I32);
+    }
+
+    /// Generates ge_u instruction
+    pub fn gen_ge_u(&mut self, tp: &WASMType) {
+        self.stack().pop(tp);
+        self.stack().pop(tp);
+        self.gen_inst(&format!("{}.ge_u", tp.generate()));
         self.stack().push(WASMType::I32);
     }
 

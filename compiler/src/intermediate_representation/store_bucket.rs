@@ -470,7 +470,8 @@ impl GenerateLigetron for StoreBucket {
         generate_ligetron_load_ref(producer,
                                    &self.dest,
                                    &self.dest_address_type,
-                                   &self.context.size);
+                                   &self.context.size,
+                                   true);
 
         producer.debug_dump_state("store bucket after load dest ref");
 
@@ -493,6 +494,9 @@ impl GenerateLigetron for StoreBucket {
             }
             _ => {}
         }
+
+        // resetting computation mode to Fr
+        producer.set_fr_computation_type();
 
         producer.gen_comment("store bucket end");
         producer.debug_dump_state("after store bucket");

@@ -19,6 +19,13 @@ impl CircomValueType {
         }
     }
 
+    pub fn is_fr_array(&self) -> bool {
+        return match self {
+            CircomValueType::FRArray(..) => true,
+            _ => false
+        }
+    }
+
     pub fn is_fr(&self) -> bool {
         return !self.is_wasm();
     }

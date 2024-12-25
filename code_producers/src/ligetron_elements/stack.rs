@@ -7,6 +7,7 @@ use super::types::*;
 use super::wasm::*;
 
 use std::cell::RefCell;
+use std::cell::RefMut;
 use std::rc::Rc;
 use std::collections::HashMap;
 
@@ -221,7 +222,7 @@ pub trait ConvertibleToValueRef {
     /// Converts value to reference
     fn to_ref(&self) -> CircomValueRef;
 
-    /// Generates loading of value onto WASM stack
+    /// Generates loading of pointer to value onto WASM stack
     fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame);
 
     /// Generates address of array element at specified constant index
@@ -332,8 +333,8 @@ pub enum CircomStackValueKind {
     /// Value stored in WASM stack
     WASMSTack(WASMType),
 
-    /// Constant index in array
-    ConstIndex(i32),
+    /// Constant i32 value
+    ConstValue(i32),
 
     /// Dynamic index in array with constant offset (located in WASM stack as I32 value)
     Index(i32),
@@ -445,7 +446,7 @@ impl CircomStackFrame {
             CircomStackValueKind::ArraySliceRef(..) => false,
             CircomStackValueKind::ArrayElementRef(..) => false,
             CircomStackValueKind::WASMSTack(..) => true,
-            CircomStackValueKind::ConstIndex(..) => false,
+            CircomStackValueKind::ConstValue(..) => false,
             CircomStackValueKind::Index(..) => true,
             CircomStackValueKind::Address => true,
             CircomStackValueKind::ArrayAddress(..) => true
@@ -474,8 +475,8 @@ impl CircomStackFrame {
                 CircomValueType::FR
             },
             CircomStackValueKind::WASMSTack(wasm_tp) => CircomValueType::WASM(*wasm_tp),
-            CircomStackValueKind::ConstIndex(..) => {
-                panic!("should not reach here")
+            CircomStackValueKind::ConstValue(..) => {
+                CircomValueType::WASM(WASMType::I32)
             },
             CircomStackValueKind::Index(..) => {
                 panic!("should not reach here");
@@ -485,6 +486,36 @@ impl CircomStackFrame {
             }
             CircomStackValueKind::ArrayAddress(size) => {
                 CircomValueType::FRArray(*size)
+            }
+        };
+    }
+
+    /// Loads value onto WASM stack converting it if required
+    pub fn value_load_as_wasm(&self, val_ref: &CircomStackValueRef) {
+        let val_kind = &val_ref.value_rc.borrow().kind;
+        return match val_kind {
+            CircomStackValueKind::MemoryPtrConst(_tp, _addr) => {
+                panic!("Conversion from global constants to i32 is not implemented yet");
+            }
+            CircomStackValueKind::TemporaryStackValue(_temp_val) => {
+                panic!("")
+            }
+            CircomStackValueKind::ValueRef(val_ref) => {
+            }
+            CircomStackValueKind::ArraySliceRef(_arr, _offset, size) => {
+            }
+            CircomStackValueKind::ArrayElementRef(_arr, _offset) => {
+            }
+            CircomStackValueKind::WASMSTack(wasm_tp) => {
+            }
+            CircomStackValueKind::ConstValue(..) => {
+            }
+            CircomStackValueKind::Index(..) => {
+                panic!("should not reach here");
+            }
+            CircomStackValueKind::Address => {
+            }
+            CircomStackValueKind::ArrayAddress(size) => {
             }
         };
     }
@@ -502,7 +533,7 @@ impl CircomStackFrame {
                     }
                     CircomValueType::FRArray(size) => {
                         for i in 0 .. *size {
-                            self.load_const_index(i as i32);
+                            self.load_i32_const(i as i32);
                             self.load_array_element_ref(val);
                             let fp256_clear =
                                 self.module.borrow().ligetron().fp256_clear.clone();
@@ -513,6 +544,40 @@ impl CircomStackFrame {
                 };
             }
             _ => {}
+        }
+    }
+
+    /// Loads int value to WASM stack
+    pub fn value_load_int_to_wasm_stack(&mut self, val: &CircomStackValueRef) {
+        match self.value_kind(&val) {
+            CircomStackValueKind::ConstValue(val) => {
+                self.func.borrow_mut().gen_const(WASMType::I32, val as i64);
+            }
+            CircomStackValueKind::WASMSTack(_type) => {
+                panic!("value is already located on WASM stack");
+            }
+            CircomStackValueKind::ValueRef(val) => {
+                match val {
+                    CircomValueRef::LocalVariable(var) => {
+                        let var_type = self.local_var_type(&var).clone(); 
+                        match var_type {
+                            CircomValueType::WASM(wasm_type) => {
+                                var.gen_addr_const(self, 0);
+                                self.func.borrow_mut().gen_load(wasm_type.clone());
+                            }
+                            _ => {
+                                panic!("Fr local variable can't be loaded as int to WASM stack");
+                            }
+                        }
+                    }
+                    _ => {
+                        panic!("value ref can't be loaded as int to WASM stack");
+                    }
+                }
+            }
+            _ => {
+                panic!("value can't be loaded as int to WASM stack");
+            }
         }
     }
 
@@ -539,7 +604,6 @@ impl CircomStackFrame {
                 arr.load_array_element_ptr_to_wasm_stack(self, offset);
             }
             _ => {
-                // should be handled by WASM check at the beginning of function
                 panic!("should not reach here");
             }
         }
@@ -618,8 +682,8 @@ impl CircomStackFrame {
             CircomStackValueKind::WASMSTack(tp) => {
                 format!("WASM STACK {}", tp.to_string())
             }
-            CircomStackValueKind::ConstIndex(addr) => {
-                format!("INDEX CONST {}", addr)
+            CircomStackValueKind::ConstValue(val) => {
+                format!("CONST {}", val)
             }
             CircomStackValueKind::Index(offset) => {
                 format!("INDEX WASM STACK + {}", offset)
@@ -864,6 +928,10 @@ impl CircomStackFrame {
 
     /// Allocates multiple temporary values on stack. Returns references to allocated values
     pub fn alloc_temp_n(&mut self, types: &Vec<CircomValueType>) -> Vec<TemporaryStackValueRef> {
+        if types.len() == 0 {
+            return Vec::new();
+        }
+
         // allocating space on memory stack
         let sizes = types.iter().map(|t| t.size()).collect();
         let mem_stack_vals = self.mem_frame.borrow_mut().alloc(sizes);
@@ -884,7 +952,7 @@ impl CircomStackFrame {
                 }
                 CircomValueType::FRArray(size) => {
                     for i in 0 .. *size {
-                        self.load_const_index(i as i32);
+                        self.load_i32_const(i as i32);
                         self.load_array_element_ref(&temp_val);
                         let fp256_init = self.module.borrow().ligetron().fp256_init.clone();
                         self.gen_call(&fp256_init);
@@ -952,7 +1020,7 @@ impl CircomStackFrame {
 
         // calculating value address
         match self.top(0).value_rc.borrow().kind {
-            CircomStackValueKind::ConstIndex(value) => {
+            CircomStackValueKind::ConstValue(value) => {
                 self.pop(1);
                 self.push(CircomStackValueKind::ArraySliceRef(arr.to_ref(), value as usize, size));
             }
@@ -982,7 +1050,7 @@ impl CircomStackFrame {
 
         // calculating value address
         match self.top(0).value_rc.borrow().kind {
-            CircomStackValueKind::ConstIndex(value) => {
+            CircomStackValueKind::ConstValue(value) => {
                 self.pop(1);
                 self.push(CircomStackValueKind::ArrayElementRef(arr.to_ref(), value as usize));
             }
@@ -1002,24 +1070,15 @@ impl CircomStackFrame {
     ////////////////////////////////////////////////////////////
     /// Indexes and Addresses
 
-    /// Loads const address on stack
-    pub fn load_const_index(&mut self, addr: i32) {
-        self.push(CircomStackValueKind::ConstIndex(addr));
+    /// Loads i32 const value on stack
+    pub fn load_i32_const(&mut self, val: i32) {
+        self.push(CircomStackValueKind::ConstValue(val));
     }
 
     /// Converts current stack top value to index. The top of stack must be a WASM I32 value
     pub fn convert_index(&mut self) {
-        // checking value type
-        match &self.values.last().expect("stack is empty").borrow().kind {
-            CircomStackValueKind::WASMSTack(tp) => {
-                if *tp != WASMType::I32 {
-                    panic!("top stack value is not a WASM I32 stack value");
-                }
-            }
-            _ => {
-                panic!("top stack value is not a WASM stack value");
-            }
-        }
+        // loading value as integer to WASM stack
+        self.value_load_int_to_wasm_stack(&self.top(0));
 
         // converting stack value
         self.pop(1);
@@ -1032,13 +1091,13 @@ impl CircomStackFrame {
         let second = self.top(1);
 
         let res = match &first.value_rc.borrow().kind {
-            CircomStackValueKind::ConstIndex(addr) => {
+            CircomStackValueKind::ConstValue(addr) => {
                 match &second.value_rc.borrow().kind {
-                    CircomStackValueKind::ConstIndex(addr2) => {
-                        CircomStackValueKind::ConstIndex(addr + addr2)
+                    CircomStackValueKind::ConstValue(addr2) => {
+                        CircomStackValueKind::ConstValue(addr + addr2)
                     }
                     CircomStackValueKind::Index(offset) => {
-                        CircomStackValueKind::Index(addr + offset)
+                        CircomStackValueKind::Index((*addr as i32) + offset)
                     }
                     _ => {
                         panic!("stack value is not an address");
@@ -1047,8 +1106,8 @@ impl CircomStackFrame {
             }
             CircomStackValueKind::Index(offset) => {
                 match &second.value_rc.borrow().kind {
-                    CircomStackValueKind::ConstIndex(addr) => {
-                        CircomStackValueKind::Index(offset + addr)
+                    CircomStackValueKind::ConstValue(addr) => {
+                        CircomStackValueKind::Index(offset + (*addr as i32))
                     }
                     CircomStackValueKind::Index(offset2) => {
                         self.func.borrow_mut().gen_add(WASMType::I32);
@@ -1074,10 +1133,10 @@ impl CircomStackFrame {
         let second = self.top(1);
 
         let res = match &first.value_rc.borrow().kind {
-            CircomStackValueKind::ConstIndex(addr) => {
+            CircomStackValueKind::ConstValue(addr) => {
                 match &second.value_rc.borrow().kind {
-                    CircomStackValueKind::ConstIndex(addr2) => {
-                        CircomStackValueKind::ConstIndex(addr * addr2)
+                    CircomStackValueKind::ConstValue(addr2) => {
+                        CircomStackValueKind::ConstValue(addr * addr2)
                     }
                     CircomStackValueKind::Index(offset) => {
                         self.func.borrow_mut().gen_const(WASMType::I32, *addr as i64);
@@ -1091,7 +1150,7 @@ impl CircomStackFrame {
             }
             CircomStackValueKind::Index(offset) => {
                 match &second.value_rc.borrow().kind {
-                    CircomStackValueKind::ConstIndex(addr) => {
+                    CircomStackValueKind::ConstValue(addr) => {
                         self.func.borrow_mut().gen_const(WASMType::I32, *addr as i64);
                         self.func.borrow_mut().gen_mul(WASMType::I32);
                         CircomStackValueKind::Index(offset * *addr)
@@ -1117,7 +1176,7 @@ impl CircomStackFrame {
     /// Returns true if index located on top of stack is const
     pub fn top_index_is_const(&self) -> bool {
         match self.top(0).value_rc.borrow().kind {
-            CircomStackValueKind::ConstIndex(..) => true,
+            CircomStackValueKind::ConstValue(..) => true,
             CircomStackValueKind::Index(..) => false,
             _ => {
                 panic!("top stack value is not and index value");
@@ -1128,7 +1187,7 @@ impl CircomStackFrame {
     /// Returns constant offset of index located on top of stack
     pub fn top_index_offset(&self) -> i32 {
         match self.top(0).value_rc.borrow().kind {
-            CircomStackValueKind::ConstIndex(value) => value,
+            CircomStackValueKind::ConstValue(value) => value,
             CircomStackValueKind::Index(offset) => offset,
             _ => {
                 panic!("top stack value is not and index value");
@@ -1139,24 +1198,23 @@ impl CircomStackFrame {
 
     ////////////////////////////////////////////////////////////
     /// Call operation
-    
-    /// Loads specified number of top stack values onto WASM stack
-    pub fn load_values_to_wasm_stack(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
 
-        // We need to put all parameters onto WASM stack in correct order. For that,
-        // we first store all parameters located on WASM stack to temporary locals and
+    /// Generates operation with automatic conversion of arguments located on stack to
+    /// required types
+    pub fn gen_op<Op: FnOnce(RefMut<WASMFunction>) -> ()>
+            (&mut self, arg_types: Vec<CircomValueType>, first_is_ptr: bool, op: Op) {
+        // We need to put all values onto WASM stack in correct order. For that,
+        // we first store all values already located on WASM stack to temporary locals and
         // then load them again
 
-        let mut params_locals = Vec::<Option<WASMLocalVariableRef>>::new();
-        for _ in 0 .. count {
-            params_locals.push(None);
+        let mut wasm_locals = Vec::<Option<WASMLocalVariableRef>>::new();
+        for _ in 0 .. arg_types.len() {
+            wasm_locals.push(None);
         }
 
-        // saving parameters already located on WASM stack to WASM locals 
-        for val_idx in 0 .. count {
+        // saving values already located on WASM stack to WASM locals
+        for val_idx in 0 .. arg_types.len() {
+            let loc_idx = arg_types.len() - val_idx - 1;
             let val = self.top(val_idx);
             if self.value_is_wasm_stack(&val) {
                 let val_type = self.value_type(&val);
@@ -1166,23 +1224,298 @@ impl CircomStackFrame {
                     CircomValueType::FRArray(..) => WASMType::PTR
                 };
 
-                // saving parameter from WASM stack to temporary local
+                // saving value from WASM stack to temporary local
                 let tmp_local = self.func.borrow_mut().new_wasm_local(wasm_t);
                 self.func.borrow_mut().gen_local_set(&tmp_local);
-                params_locals[val_idx] = Some(tmp_local);
+                wasm_locals[loc_idx] = Some(tmp_local);
             }
         }
 
-        // loading parameters onto WASM stack
-        for param_idx in 0 .. count {
-            let val_idx = count - param_idx - 1;
-            match &params_locals[val_idx] {
+        // identifying values with required int -> Fr conversion
+
+        let mut requires_conversion_to_fr = Vec::<bool>::new();
+        let mut fr_temp_values_count = 0;
+
+        for val_idx in 0 .. arg_types.len() {
+            let stack_idx = arg_types.len() - val_idx - 1;
+            let val = self.top(stack_idx);
+
+            let is_conv = match arg_types[val_idx] {
+                CircomValueType::FR => {
+                    match self.value_type(&val) {
+                        CircomValueType::FR => false,
+                        CircomValueType::WASM(..) => true,
+                        CircomValueType::FRArray(..) => {
+                            panic!("Fr arrays should not reach here");
+                        }
+                    }
+                }
+                CircomValueType::WASM(..) => false,
+                CircomValueType::FRArray(..) => {
+                    panic!("Fr arrays should not reach here");
+                }
+            };
+
+            requires_conversion_to_fr.push(is_conv);
+
+            if is_conv {
+                fr_temp_values_count += 1;
+            }
+
+            if is_conv && val_idx == 0 && first_is_ptr {
+                panic!("can't generate value conversion for pointer argument")
+            }
+        }
+
+        // allocating temporary values for results of Fr conversion
+        let fr_types: Vec<_> = std::iter::repeat([CircomValueType::FR])
+            .flatten()
+            .take(fr_temp_values_count)
+            .collect();
+        let fr_alloc_result = self.alloc_temp_n(&fr_types);
+
+        // saving allocated fr values
+        let mut fr_temp_vals = Vec::<Option<TemporaryStackValueRef>>::new();
+        let mut fr_alloc_result_idx = 0;
+        for val_idx in 0 .. arg_types.len() {
+            if requires_conversion_to_fr[val_idx] {
+                fr_temp_vals.push(Some(fr_alloc_result[fr_alloc_result_idx].clone()));
+                fr_alloc_result_idx += 1;
+            } else {
+                fr_temp_vals.push(None);
+            }
+        }
+
+        // loading values onto WASM stack and converting them to specified argument type
+        for val_idx in 0 .. arg_types.len() {
+            // NOTE: taking into account number of allocated temporary fr values when
+            // calculating stack index
+            let stack_idx = arg_types.len() + fr_temp_values_count - val_idx - 1;
+            match &wasm_locals[val_idx] {
+                Some(wasm_local) => {
+                    let val = self.top(stack_idx);
+                    match arg_types[val_idx] {
+                        CircomValueType::FRArray(..) => {
+                            panic!("Fr arrays should not reach here");
+                        }
+                        CircomValueType::FR => {
+                            if self.value_type(&val).is_fr() {
+                                self.func.borrow_mut().gen_local_get(&wasm_local);
+                            } else {
+                                let temp_fr_val = fr_temp_vals[val_idx].clone().unwrap();
+
+                                // loading pointer to temporary fr value
+                                self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+
+                                // loading argument from WASM local
+                                self.func.borrow_mut().gen_local_get(&wasm_local);
+
+                                // converting argument to i64
+                                self.func.borrow_mut().gen_i64_extend_i32_s();
+
+                                // converting int to Fr value with fp256_set_ui function
+                                let fp256_set_ui =
+                                    self.module.borrow().ligetron().fp256_set_ui.to_wasm();
+                                self.func.borrow_mut().gen_call(&fp256_set_ui);
+
+                                // loading pointer to temporary fr value again
+                                self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+                            }
+                        }
+                        CircomValueType::WASM(wasm_comp_tp) => {
+                            match self.value_type(&val) {
+                                CircomValueType::FR => {
+                                    panic!("Conversion from Fr to wasm is not supported yet");
+                                }
+                                CircomValueType::FRArray(..) => {
+                                    panic!("Fr arrays should not reach here");
+                                }
+                                CircomValueType::WASM(val_wasm_tp) => {
+                                    if wasm_comp_tp != val_wasm_tp {
+                                        panic!("Conversion between wasm types is not implemented yet");
+                                    }
+
+                                    // loading argument from WASM local
+                                    self.func.borrow_mut().gen_local_get(&wasm_local);
+                                }
+                            }
+                        }
+                    }
+                }
+                None => {
+                    let val = self.top(stack_idx);
+                    let val_type = self.value_type(&val);
+
+                    match arg_types[val_idx] {
+                        CircomValueType::FRArray(..) => {
+                            panic!("Fr arrays should not reach here");
+                        }
+                        CircomValueType::FR => {
+                            match val_type {
+                                CircomValueType::FRArray(..) => {
+                                    panic!("Fr arrays should not reach here");
+                                }
+                                CircomValueType::FR => {
+                                    // loading argument to WASM stack using generic load
+                                    self.value_load_ptr_to_wasm_stack(&val);
+                                }
+                                CircomValueType::WASM(_wasm_type) => {
+                                    let temp_fr_val = fr_temp_vals[val_idx].clone().unwrap();
+
+                                    // loading pointer to temporary fr value
+                                    self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+
+                                    // loading argument to WASM stack
+                                    self.value_load_int_to_wasm_stack(&val);
+
+                                    // converting argument to i64
+                                    self.func.borrow_mut().gen_i64_extend_i32_s();
+
+                                    // converting int to Fr value with fp256_set_ui function
+                                    let fp256_set_ui =
+                                        self.module.borrow().ligetron().fp256_set_ui.to_wasm();
+                                    self.func.borrow_mut().gen_call(&fp256_set_ui);
+
+                                    // loading pointer to temporary fr value again
+                                    self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+                                }
+                            }
+                        }
+                        CircomValueType::WASM(arg_wasm_type) => {
+                            match val_type {
+                                CircomValueType::FRArray(..) => {
+                                    panic!("Fr arrays should not reach here");
+                                }
+                                CircomValueType::FR => {
+                                    panic!("Conversion from Fr to wasm is not supported yet");
+                                }
+                                CircomValueType::WASM(val_wasm_tp) => {
+                                    if arg_wasm_type != val_wasm_tp {
+                                        panic!("Conversion between wasm types is not implemented yet");
+                                    }
+
+                                    // loading parameter to WASM stack
+                                    if val_idx == 0 && first_is_ptr {
+                                        self.value_load_ptr_to_wasm_stack(&val);
+                                    } else {
+                                        self.value_load_int_to_wasm_stack(&val);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // generating operation
+        op(self.func.borrow_mut());
+
+        // TODO:
+        // implement stack deallocation after conversion from wasm to fr is implemented
+
+        // removing parameters and allocated Fr values from stack
+        self.pop(arg_types.len() + fr_temp_values_count);
+    }
+    
+    /// Loads specified number of top stack values onto WASM stack converting them to
+    /// specified computation type
+    pub fn load_values_to_wasm_stack(&mut self, count: usize, computation_tp: CircomValueType) {
+        if count == 0 {
+            return;
+        }
+
+        // We need to put all values onto WASM stack in correct order. For that,
+        // we first store all values already located on WASM stack to temporary locals and
+        // then load them again
+
+        let mut values_locals = Vec::<Option<WASMLocalVariableRef>>::new();
+        for _ in 0 .. count {
+            values_locals.push(None);
+        }
+
+        // saving values already located on WASM stack to WASM locals 
+        for val_idx in 0 .. count {
+            let loc_idx = count - val_idx - 1;
+            let val = self.top(val_idx);
+            if self.value_is_wasm_stack(&val) {
+                let val_type = self.value_type(&val);
+                let wasm_t = match val_type {
+                    CircomValueType::WASM(wt) => wt,
+                    CircomValueType::FR => WASMType::PTR,
+                    CircomValueType::FRArray(..) => WASMType::PTR
+                };
+
+                // saving value from WASM stack to temporary local
+                let tmp_local = self.func.borrow_mut().new_wasm_local(wasm_t);
+                self.func.borrow_mut().gen_local_set(&tmp_local);
+                values_locals[loc_idx] = Some(tmp_local);
+            }
+        }
+
+        // loading values onto WASM stack and converting them to specified computation type
+        for val_idx in 0 .. count {
+            let stack_idx = count - val_idx - 1;
+            match &values_locals[val_idx] {
                 Some(wasm_local) => {
                     self.func.borrow_mut().gen_local_get(&wasm_local);
+                    let val = self.top(stack_idx);
+                    match computation_tp {
+                        CircomValueType::FRArray(..) => {
+                            panic!("Fr arrays should not reach here");
+                        }
+                        CircomValueType::FR => {
+                            if !self.value_type(&val).is_fr() {
+                                panic!("Conversion from wasm to Fr is not supported yet");
+                            }
+                        }
+                        CircomValueType::WASM(wasm_comp_tp) => {
+                            match self.value_type(&val) {
+                                CircomValueType::FR => {
+                                    panic!("Conversion from Fr to wasm is not supported yet");
+                                }
+                                CircomValueType::FRArray(..) => {
+                                    panic!("Fr arrays should not reach here");
+                                }
+                                CircomValueType::WASM(val_wasm_tp) => {
+                                    if wasm_comp_tp != val_wasm_tp {
+                                        panic!("Conversion between wasm types is not implemented yet");
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 None => {
                     // loading parameter onto WASM stack using generic load
-                    self.value_load_ptr_to_wasm_stack(&self.top(val_idx));
+                    self.value_load_ptr_to_wasm_stack(&self.top(stack_idx));
+
+                    let val = self.top(stack_idx);
+                    match computation_tp {
+                        CircomValueType::FRArray(..) => {
+                            panic!("Fr arrays should not reach here");
+                        }
+                        CircomValueType::FR => {
+                            if !self.value_type(&val).is_fr() {
+                                panic!("Conversion from wasm to Fr is not supported yet");
+                            }
+                        }
+                        CircomValueType::WASM(wasm_comp_tp) => {
+                            match self.value_type(&val) {
+                                CircomValueType::FR => {
+                                    panic!("Conversion from Fr to wasm is not supported yet");
+                                }
+                                CircomValueType::FRArray(..) => {
+                                    panic!("Fr arrays should not reach here");
+                                }
+                                CircomValueType::WASM(val_wasm_tp) => {
+                                    if wasm_comp_tp != val_wasm_tp {
+                                        panic!("Conversion between wasm types is not implemented yet");
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1206,7 +1539,7 @@ impl CircomStackFrame {
             }
         }
 
-        self.load_values_to_wasm_stack(num_stack_vals);
+        self.load_values_to_wasm_stack(num_stack_vals, CircomValueType::FR);
  
         // Generating call instruction
         self.func.borrow_mut().gen_call(&func_ref.to_wasm());
@@ -1230,7 +1563,7 @@ impl CircomStackFrame {
     /// Constants
 
     /// Loads WASM const value on stack
-    pub fn load_const(&mut self, tp: WASMType, val: i64) -> CircomStackValueRef {
+    pub fn load_wasm_const(&mut self, tp: WASMType, val: i64) -> CircomStackValueRef {
         self.func.borrow_mut().gen_const(tp, val);
         return self.push(CircomStackValueKind::WASMSTack(tp));
     }
@@ -1250,72 +1583,6 @@ impl CircomStackFrame {
     /// Pushes value stored in WASM stack
     pub fn push_wasm_stack(&mut self, tp: WASMType) -> CircomStackValueRef {
         return self.push(CircomStackValueKind::WASMSTack(tp));
-    }
-
-    /// Pops single WASM value of specified type from stack
-    fn pop_wasm_stack_impl(&mut self, opt_type: Option<WASMType>) {
-        match self.values.last().expect("expected WASM value, but stack is empty").borrow().kind {
-            CircomStackValueKind::WASMSTack(stack_type) => {
-                match opt_type {
-                    Some(t) => {
-                        if stack_type != t {
-                            panic!("expected WASM value of type {}, found {}",
-                                   t.to_string(),
-                                   stack_type.to_string());
-                        }
-                    }
-                    None => {}
-                }
-            }
-            _ => {
-                panic!("expected WASM value on stack")
-            }
-        }
-
-        self.pop(1);
-    }
-
-    /// Pops single WASM value of specified type from stack
-    pub fn pop_wasm_stack(&mut self, opt_type: &WASMType) {
-        self.pop_wasm_stack_impl(Some(*opt_type));
-    }
-
-    /// Pops single WASM value of any type from stack
-    pub fn pop_wasm_stack_any(&mut self) {
-        self.pop_wasm_stack_impl(None);
-    }
-
-    /// Checks that values located on top of stack is suitable for WASM pointer arithmetics
-    pub fn pop_wasm_ptr_ops(&mut self) {
-        if self.values.len() < 2 {
-            panic!("Expected stack values for pointer arithmetics, but stack size is less than 2");
-        }
-
-        let t1 = match self.values.last().expect("expected WASM value, but stack is empty")
-                           .borrow().kind {
-            CircomStackValueKind::WASMSTack(tp) => tp,
-            _ => {
-                panic!("expected WASM value on stack")
-            }
-        };
-        self.pop(1);
-
-        let t2 = match self.values.last().expect("expected WASM value, but stack is empty")
-                           .borrow().kind {
-            CircomStackValueKind::WASMSTack(tp) => tp,
-            _ => {
-                panic!("expected WASM value on stack")
-            }
-        };
-        self.pop(1);
-
-        if t1 == WASMType::I32 && t2 == WASMType::PTR ||
-           t1 == WASMType::PTR && t2 == WASMType::I32 {
-            return;
-        }
-
-        panic!("Expected stack values for pointer arithmetics, but found: {}, {}",
-               t1.to_string(), t2.to_string());
     }
 
 
@@ -1354,14 +1621,6 @@ impl CircomStackFrame {
         self.check_branch();
         let res = self.branch_starts.pop();
         assert!(res.is_some());
-    }
-
-    /// Generates WASM local.get instruction and pushes WASM value on logical stack
-    pub fn gen_wasm_local_get(&mut self, var_ref: &WASMLocalVariableRef) {
-        let (_, tp) = self.func.borrow().local(var_ref);
-
-        self.func.borrow_mut().gen_local_get(var_ref);
-        self.push_wasm_stack(tp);
     }
 
 
@@ -1412,7 +1671,7 @@ impl CircomStackFrame {
                 }
                 CircomValueType::FRArray(size) => {
                     for idx in 0 .. *size {
-                        self.load_const_index(idx as i32);
+                        self.load_i32_const(idx as i32);
                         self.load_array_element_ref(&loc);
                         let fp256_clear = &self.module.borrow().ligetron().fp256_clear.clone();
                         self.gen_call(&fp256_clear);

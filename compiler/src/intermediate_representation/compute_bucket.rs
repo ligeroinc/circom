@@ -1,4 +1,5 @@
 use super::ir_interface::*;
+use super::value_bucket;
 use crate::translating_traits::*;
 use code_producers::c_elements::*;
 use code_producers::ligetron_elements;
@@ -294,68 +295,130 @@ impl WriteWasm for ComputeBucket {
     }
 }
 
+/// Returns true if instruction is load instruction from 32bit variable
+fn is_32bit_var(inst: &InstructionPointer, producer: &LigetronProducer) -> bool {
+    match inst.as_ref() {
+        Instruction::Load(load_bucket) => {
+            match &load_bucket.src {
+                LocationRule::Indexed { location, .. } => {
+                    match location.as_ref() {
+                        Instruction::Value(value_bucket) => {
+                            producer.is_local_var_32bit(value_bucket.value)
+                        }
+                        _ => false
+                    }
+                }
+                _ => false
+            }
+        }
+        _ => false
+    }
+}
+
+/// Returns true if instruction is a 32bit constant value
+fn is_32bit_const(inst: &InstructionPointer, producer: &LigetronProducer) -> bool {
+    match inst.as_ref() {
+        Instruction::Value(value_bucket) => {
+            if value_bucket.parse_as == ValueType::U32 {
+                true
+            } else {
+                return producer.is_global_const_32bit(value_bucket.value)
+            }
+        }
+        _ => false
+    }
+}
+
+fn is_32bit_var_or_const(inst: &InstructionPointer, producer: &LigetronProducer) -> bool {
+    return is_32bit_var(inst, producer) || is_32bit_const(inst, producer);
+}
+
 impl GenerateLigetron for ComputeBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before compute bucket");
         producer.gen_comment("before compute bucket");
 
-        let is_addr = match self.op {
-            OperatorType::AddAddress => true,
-            OperatorType::MulAddress => true,
-            OperatorType::ToAddress => true,
-            _ => false
+        // switching computation type to Fr if operator does not propogate 32bit
+        // computation mode from result to operands
+        let prev_comp_type = if !compute_op_propagates_32bit_down(self.op) {
+            // special case for comparison of 32bit variables and/or small constants,
+            // in that case computation can be done in 32bit mode
+            
+            let is_cmp_op = match self.op {
+                OperatorType::LesserEq => true,
+                OperatorType::GreaterEq => true,
+                OperatorType::Lesser => true,
+                OperatorType::Greater => true,
+                OperatorType::Eq(usize) => usize == 1,
+                OperatorType::NotEq => true,
+                _ => false
+            };
+
+            let is_cmp_op_32bit = if is_cmp_op {
+                is_32bit_var_or_const(&self.stack[0], producer) &&
+                    is_32bit_var_or_const(&self.stack[1], producer)
+            } else {
+                false
+            };
+
+            if is_cmp_op_32bit {
+                None
+            } else {
+                Some(producer.set_fr_computation_type())
+            }
+        } else {
+            None
         };
 
-        // setting I32 constant mode for address arithmetic
-        let const_mode_i32 = if is_addr { true } else { false };
-        let prev_const_mode = producer.set_const_addr_mode(const_mode_i32);
-
-        // allocating stack value for operation result except for address arithmetic
-        if !is_addr {
-            producer.alloc_fr_result();
-        }
+        // allocating stack value for computation result
+        producer.alloc_result();
 
         // generating code for calculating operation arguments
         for inst in &self.stack {
             inst.generate_ligetron(producer);
         }
 
-        // restoring previous constant mode
-        producer.set_const_addr_mode(prev_const_mode);
-
         // generating operation
         match self.op {
-            OperatorType::Mul =>        { producer.fr_mul();  }
-            OperatorType::Div =>        { producer.fr_div();  }
-            OperatorType::Add =>        { producer.fr_add();  }
-            OperatorType::Sub =>        { producer.fr_sub();  }
-            OperatorType::Pow =>        { producer.fr_pow();  }
-            OperatorType::IntDiv =>     { producer.fr_idiv(); }
-            OperatorType::Mod =>        { producer.fr_mod();  }
-            OperatorType::ShiftL =>     { producer.fr_shl();  }
-            OperatorType::ShiftR =>     { producer.fr_shr();  }
-            OperatorType::LesserEq =>   { producer.fr_leq();  }
-            OperatorType::GreaterEq =>  { producer.fr_geq();  }
-            OperatorType::Lesser =>     { producer.fr_lt();   }
-            OperatorType::Greater =>    { producer.fr_gt();   }
+            OperatorType::Mul =>        { producer.gen_mul();  }
+            OperatorType::Div =>        { producer.gen_div();  }
+            OperatorType::Add =>        { producer.gen_add();  }
+            OperatorType::Sub =>        { producer.gen_sub();  }
+            OperatorType::Pow =>        { producer.gen_pow();  }
+            OperatorType::IntDiv =>     { producer.gen_idiv(); }
+            OperatorType::Mod =>        { producer.gen_mod();  }
+            OperatorType::ShiftL =>     { producer.gen_shl();  }
+            OperatorType::ShiftR =>     { producer.gen_shr();  }
+            OperatorType::LesserEq =>   { producer.gen_leq();  }
+            OperatorType::GreaterEq =>  { producer.gen_geq();  }
+            OperatorType::Lesser =>     { producer.gen_lt();   }
+            OperatorType::Greater =>    { producer.gen_gt();   }
             OperatorType::Eq(usize) => {
                 if usize != 1 {
                     panic!("NYI");
                 }
-                producer.fr_eq();
+                producer.gen_eq();
             }
-            OperatorType::NotEq =>      { producer.fr_neq();  }
-            OperatorType::BoolOr =>     { producer.fr_lor();  }
-            OperatorType::BoolAnd =>    { producer.fr_land(); }
-            OperatorType::BitOr =>      { producer.fr_bor();  }
-            OperatorType::BitAnd =>     { producer.fr_band(); }
-            OperatorType::BitXor =>     { producer.fr_bxor(); }
-            OperatorType::PrefixSub =>  { producer.fr_neg();  }
-            OperatorType::BoolNot =>    { producer.fr_lnot(); }
-            OperatorType::Complement => { producer.fr_bnot(); }
+            OperatorType::NotEq =>      { producer.gen_neq();  }
+            OperatorType::BoolOr =>     { producer.gen_lor();  }
+            OperatorType::BoolAnd =>    { producer.gen_land(); }
+            OperatorType::BitOr =>      { producer.gen_bor();  }
+            OperatorType::BitAnd =>     { producer.gen_band(); }
+            OperatorType::BitXor =>     { producer.gen_bxor(); }
+            OperatorType::PrefixSub =>  { producer.gen_neg();  }
+            OperatorType::BoolNot =>    { producer.gen_lnot(); }
+            OperatorType::Complement => { producer.gen_bnot(); }
             OperatorType::ToAddress =>  { producer.to_address(); }
             OperatorType::MulAddress => { producer.addr_mul(); }
             OperatorType::AddAddress => { producer.addr_add(); }
+        }
+
+        // restoring previous computation type
+        match prev_comp_type {
+            Some(comp_type) => {
+                producer.set_computation_type(comp_type);
+            },
+            None => {}
         }
 
         producer.gen_comment("after compute bucket");
@@ -458,4 +521,37 @@ impl WriteC for ComputeBucket {
 	//compute_c.push(format!("// end of compute with result {}",result));
         (compute_c, result)
     }
+}
+
+/// Returns true if compute operator propagates 32bit variable type from
+/// result to operands
+pub fn compute_op_propagates_32bit_down(op: OperatorType) -> bool {
+    return match op {
+        OperatorType::Mul => true,
+        OperatorType::Div => true,
+        OperatorType::Add => true,
+        OperatorType::Sub => true,
+        OperatorType::Pow => true,
+        OperatorType::IntDiv => true,
+        OperatorType::Mod => false,
+        OperatorType::ShiftL => false,
+        OperatorType::ShiftR => false,
+        OperatorType::LesserEq => false,
+        OperatorType::GreaterEq => false,
+        OperatorType::Lesser => false,
+        OperatorType::Greater => false,
+        OperatorType::Eq(_usize) => false,
+        OperatorType::NotEq => false,
+        OperatorType::BoolOr => false,
+        OperatorType::BoolAnd => false,
+        OperatorType::BitOr => true,
+        OperatorType::BitAnd => false,
+        OperatorType::BitXor => false,
+        OperatorType::PrefixSub => false,
+        OperatorType::BoolNot => false,
+        OperatorType::Complement => false,
+        OperatorType::ToAddress => true,
+        OperatorType::MulAddress => true,
+        OperatorType::AddAddress => true
+    };
 }
