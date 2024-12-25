@@ -118,8 +118,7 @@ pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
             CircomValueType::FRArray(size) => {
                 for i in 0 .. *size {
                     // pointer to FR value
-                    func.load_const_index(i as i32);
-                    func.load_array_element_ref(&fr_args[fr_arg_idx]);
+                    func.load_temp_value_array_element_ptr_to_wasm_stack(&fr_args[fr_arg_idx], i);
 
                     // pointer to string with number
                     func.gen_wasm_local_get(&args_pointers);
@@ -131,15 +130,15 @@ pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
                     func.gen_wasm_const(WASMType::I32, 10);
 
                     let fp256_set_str = &&module.borrow_mut().ligetron().fp256_set_str.clone();
-                    func.gen_call(&fp256_set_str);
-                    func.drop(1);
+                    func.gen_wasm_call(&fp256_set_str.to_wasm());
+                    func.gen_wasm_drop();
 
                     arg_idx += 1;
                 }
             }
             CircomValueType::FR => {
                 // pointer to FR value
-                func.load_ref(&fr_args[fr_arg_idx]);
+                func.load_temp_value_ptr_to_wasm_stack(&fr_args[fr_arg_idx]);
 
                 // pointer to string with number
                 func.gen_wasm_local_get(&args_pointers);
@@ -151,8 +150,10 @@ pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
                 func.gen_wasm_const(WASMType::I32, 10);
 
                 let fp256_set_str = module.borrow_mut().ligetron().fp256_set_str.clone();
-                func.gen_call(&fp256_set_str);
-                func.drop(1);
+                func.debug_dump_state("BEFORE ARG SET STR");
+                func.gen_wasm_call(&fp256_set_str.to_wasm());
+                func.debug_dump_state("AFTER ARG SET STR");
+                func.gen_wasm_drop();
 
                 arg_idx += 1;
             }

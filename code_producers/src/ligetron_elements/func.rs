@@ -178,6 +178,15 @@ impl CircomFunction {
 
 
     ////////////////////////////////////////////////////////////
+    /// Stack values operations
+
+    /// Loads value pointer onto WASM stack
+    pub fn value_load_ptr_to_wasm_stack(&mut self, val: &CircomStackValueRef) {
+        self.frame.value_load_ptr_to_wasm_stack(val);
+    }
+
+
+    ////////////////////////////////////////////////////////////
     /// Local variables
 
     /// Creates new local variable
@@ -254,6 +263,18 @@ impl CircomFunction {
     /// Allocates single temporary stack value
     pub fn alloc_temp(&mut self, tp: CircomValueType) -> TemporaryStackValueRef {
         return self.frame.alloc_temp(&tp);
+    }
+
+    /// Loads pointer to temporary value onto WASM stack
+    pub fn load_temp_value_ptr_to_wasm_stack(&mut self, val: &TemporaryStackValueRef) {
+        self.frame.load_temp_value_ptr_to_wasm_stack(val);
+    }
+
+    /// Loads pointer to temporary array value element onto WASM stack
+    pub fn load_temp_value_array_element_ptr_to_wasm_stack(&mut self,
+                                                           val: &TemporaryStackValueRef,
+                                                           index: usize) {
+        self.frame.load_temp_value_array_element_ptr_to_wasm_stack(val, index);
     }
 
 
@@ -349,140 +370,81 @@ impl CircomFunction {
 
     /// Generates call instruction
     pub fn gen_wasm_call(&mut self, func: &WASMFunctionRef) {
-        self.frame.pop(func.tp().params().len());
-
         self.func.borrow_mut().gen_call(func);
-
-        for ret_type in func.tp().ret_types() {
-            self.frame.push_wasm_stack(ret_type.clone());
-        }
     }
 
     /// Generates getting value of a local
     pub fn gen_wasm_local_get(&mut self, var_ref: &WASMLocalVariableRef) {
-        let (_, tp) = self.func.borrow().local(var_ref);
-
         self.func.borrow_mut().gen_local_get(var_ref);
-        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates setting value of a local
     pub fn gen_wasm_local_set(&mut self, var_ref: &WASMLocalVariableRef) {
-        let (_, tp) = self.func.borrow().local(var_ref);
-
-        self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_local_set(var_ref);
     }
 
     /// Generates getting value of a global
     pub fn gen_wasm_global_get(&mut self, var_ref: &WASMGlobalVariableRef) {
-        let (_, tp) = self.module.borrow().wasm_module().get_global_ref_and_type(var_ref);
-
         self.func.borrow_mut().gen_global_get(var_ref);
-        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates setting value of a global
     pub fn gen_wasm_global_set(&mut self, var_ref: &WASMGlobalVariableRef) {
-        let (_, tp) = self.module.borrow().wasm_module().get_global_ref_and_type(var_ref);
-
-        self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_global_set(var_ref);
     }
 
     /// Generates drop instruction
     pub fn gen_wasm_drop(&mut self) {
-        self.frame.pop(1);
         self.func.borrow_mut().gen_drop();
     }
 
     /// Generates constant instruction
     pub fn gen_wasm_const(&mut self, tp: WASMType, value: i64) {
         self.func.borrow_mut().gen_const(tp.clone(), value);
-        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates add instruction
     pub fn gen_wasm_add(&mut self, tp: WASMType) {
-        if tp == WASMType::PTR {
-            self.frame.pop_wasm_ptr_ops();
-        } else {
-            self.frame.pop_wasm_stack(&tp);
-            self.frame.pop_wasm_stack(&tp);
-        }
-
         self.func.borrow_mut().gen_add(tp);
-
-        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates sub instruction
     pub fn gen_wasm_sub(&mut self, tp: WASMType) {
-        if tp == WASMType::PTR {
-            self.frame.pop_wasm_ptr_ops();
-        } else {
-            self.frame.pop_wasm_stack(&tp);
-            self.frame.pop_wasm_stack(&tp);
-        }
-
         self.func.borrow_mut().gen_sub(tp);
-
-        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates mul instruction
     pub fn gen_wasm_mul(&mut self, tp: WASMType) {
-        if tp == WASMType::PTR {
-            self.frame.pop_wasm_ptr_ops();
-        } else {
-            self.frame.pop_wasm_stack(&tp);
-            self.frame.pop_wasm_stack(&tp);
-        }
-
         self.func.borrow_mut().gen_mul(tp);
-
-        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates eqz instruction
     pub fn gen_wasm_eqz(&mut self, tp: WASMType) {
-        self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_eqz(&tp);
-        self.frame.push_wasm_stack(WASMType::I32);
     }
 
     /// Generates eq instruction
     pub fn gen_wasm_eq(&mut self, tp: WASMType) {
-        self.frame.pop_wasm_stack(&tp);
-        self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_eq(&tp);
-        self.frame.push_wasm_stack(WASMType::I32);
     }
 
     /// Generates lt_u instruction
     pub fn gen_wasm_lt_u(&mut self, tp: WASMType) {
-        self.frame.pop_wasm_stack(&tp);
-        self.frame.pop_wasm_stack(&tp);
         self.func.borrow_mut().gen_lt_u(&tp);
-        self.frame.push_wasm_stack(WASMType::I32);
     }
 
     /// Generates load instruction
     pub fn gen_wasm_load(&mut self, tp: WASMType) {
-        self.frame.pop_wasm_stack(&WASMType::PTR);
         self.func.borrow_mut().gen_load(tp);
-        self.frame.push_wasm_stack(tp);
     }
 
     /// Generates store instruction
     pub fn gen_wasm_store(&mut self, tp: WASMType) {
-        self.frame.pop_wasm_stack(&WASMType::PTR);
         self.func.borrow_mut().gen_store(&tp);
     }
 
     /// Starts generating if-else block
     pub fn gen_wasm_if(&mut self) {
-        self.frame.pop_wasm_stack(&WASMType::I32);
         self.func.borrow_mut().gen_if();
         self.frame.start_branch();
     }
@@ -515,7 +477,6 @@ impl CircomFunction {
     /// Generates conditional exit from current loop
     pub fn gen_wasm_loop_exit(&mut self) {
         self.func.borrow_mut().gen_loop_exit();
-        self.frame.pop_wasm_stack(&WASMType::I32);
         self.frame.check_branch();
     }
 
@@ -722,9 +683,15 @@ impl CircomFunction {
         if size == 1 {
             self.gen_circom_store();
         } else {
-            // converting top stack values to WASM pointers
-            self.frame.convert_ref_to_wasm_ptr(0);
-            self.frame.convert_ref_to_wasm_ptr(1);
+            let src_ref = self.frame.top(0);
+            let dst_ref = self.frame.top(1);
+
+            if !self.frame.value_type(&dst_ref).is_fr() ||
+               !self.frame.value_type(&src_ref).is_fr() {
+                panic!("copy n supported only for bigint values");
+            }
+
+            self.frame.load_values_to_wasm_stack(2);
 
             let dst_ptr_var = self.new_wasm_local(WASMType::PTR);
             let src_ptr_var = self.new_wasm_local(WASMType::PTR);
@@ -775,6 +742,9 @@ impl CircomFunction {
             self.gen_wasm_local_set(&dst_ptr_var);
 
             self.gen_wasm_loop_end();
+
+            // popping original values from stack
+            self.frame.pop(2);
         }
     }
 

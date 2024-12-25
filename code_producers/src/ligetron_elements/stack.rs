@@ -8,6 +8,7 @@ use super::wasm::*;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::collections::HashMap;
 
 
 /// Circom local variable
@@ -175,17 +176,57 @@ pub enum CircomValueRef {
     TemporaryStackValue(TemporaryStackValueRef)
 }
 
+impl CircomValueRef {
+    /// Generates loading of value ptr onto WASM stack
+    pub fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
+        match self {
+            CircomValueRef::LocalVariable(var) => {
+                var.load_ptr_to_wasm_stack(frame);
+            }
+            CircomValueRef::Parameter(par) => {
+                par.load_ptr_to_wasm_stack(frame);
+            }
+            CircomValueRef::ReturnValue(ret_val) => {
+                ret_val.load_ptr_to_wasm_stack(frame);
+            }
+            CircomValueRef::TemporaryStackValue(val) => {
+                val.load_ptr_to_wasm_stack(frame);
+            }
+        }
+    }
+
+    /// Generates loading of array element ptr onto WASM stack
+    pub fn load_array_element_ptr_to_wasm_stack(&self,
+                                                frame: &mut CircomStackFrame,
+                                                index: usize) {
+        match self {
+            CircomValueRef::LocalVariable(var) => {
+                var.gen_addr_const(frame, index);
+            }
+            CircomValueRef::Parameter(par) => {
+                par.gen_addr_const(frame, index);
+            }
+            CircomValueRef::ReturnValue(ret_val) => {
+                ret_val.gen_addr_const(frame, index);
+            }
+            CircomValueRef::TemporaryStackValue(val) => {
+                val.gen_addr_const(frame, index);
+            }
+        }
+    }
+}
+
 
 pub trait ConvertibleToValueRef {
     /// Converts value to reference
     fn to_ref(&self) -> CircomValueRef;
 
-    /// Generates address of value
-    fn gen_addr(&self, frame: &mut CircomStackFrame);
+    /// Generates loading of value onto WASM stack
+    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame);
 
     /// Generates address of array element at specified constant index
     fn gen_addr_const(&self, frame: &mut CircomStackFrame, index: usize) {
-        self.gen_addr(frame);
+        self.load_ptr_to_wasm_stack(frame);
 
         let byte_offset = index * CircomValueType::FR.size();
         if byte_offset != 0 {
@@ -206,7 +247,7 @@ pub trait ConvertibleToValueRef {
         frame.func.borrow_mut().gen_mul(WASMType::I32);
 
         // calculating value address
-        self.gen_addr(frame);
+        self.load_ptr_to_wasm_stack(frame);
         frame.func.borrow_mut().gen_add(WASMType::PTR);
     }
 }
@@ -217,7 +258,7 @@ impl ConvertibleToValueRef for CircomLocalVariableRef {
     }
 
     /// Generates address of value
-    fn gen_addr(&self, frame: &mut CircomStackFrame) {
+    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         let mem_loc = frame.local_var_mem_loc(&self);
         frame.mem_frame.borrow_mut().gen_load_local_addr(&mem_loc);
     }
@@ -229,7 +270,7 @@ impl ConvertibleToValueRef for CircomParameterRef {
     }
 
     /// Generates address of value
-    fn gen_addr(&self, frame: &mut CircomStackFrame) {
+    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         let ptr_wasm_loc = frame.param_wasm_loc(self);
         frame.func.borrow_mut().gen_local_get(&ptr_wasm_loc);
     }
@@ -241,7 +282,7 @@ impl ConvertibleToValueRef for CircomReturnValueRef {
     }
 
     /// Generates address of value
-    fn gen_addr(&self, frame: &mut CircomStackFrame) {
+    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         let ptr_wasm_loc = frame.ret_val_wasm_loc(self);
         frame.func.borrow_mut().gen_local_get(&ptr_wasm_loc);
     }
@@ -253,7 +294,7 @@ impl ConvertibleToValueRef for TemporaryStackValueRef {
     }
 
     /// Generates address of value
-    fn gen_addr(&self, frame: &mut CircomStackFrame) {
+    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         frame.mem_frame.borrow_mut().gen_load_value_addr(self.mem_stack_val(), 0);
     }
 
@@ -329,19 +370,10 @@ pub struct CircomStackValueRef {
 
 impl CircomStackValueRef {
     /// Creates new reference to Circom stack value
-    pub fn new(value_rc: Rc<RefCell<CircomStackValue>>) -> CircomStackValueRef {
+    fn new(value_rc: Rc<RefCell<CircomStackValue>>) -> CircomStackValueRef {
         return CircomStackValueRef {
             value_rc: value_rc
         };
-    }
-
-    /// Returns true if value is located on WASM stack
-    pub fn is_wasm_stack(&self) -> bool {
-        match self.value_rc.borrow().kind {
-            CircomStackValueKind::WASMSTack(..) => true,
-            CircomStackValueKind::Address => true,
-            _ => true
-        }
     }
 }
 
@@ -371,7 +403,10 @@ pub struct CircomStackFrame {
     values: Vec<Rc<RefCell<CircomStackValue>>>,
 
     /// Start indexes of current branches to verify stack
-    branch_starts: Vec<usize>
+    branch_starts: Vec<usize>,
+
+    /// WASM locals for temporary values
+    temp_wasm_locals: HashMap<WASMType, WASMLocalVariableRef>
 }
 
 impl CircomStackFrame {
@@ -387,7 +422,8 @@ impl CircomStackFrame {
             params: vec![],
             ret_vals: vec![],
             values: vec![],
-            branch_starts: vec![]
+            branch_starts: vec![],
+            temp_wasm_locals: HashMap::new()
         };
     }
 
@@ -400,30 +436,14 @@ impl CircomStackFrame {
         return val_ref.value_rc.borrow().kind.clone();
     }
 
-    /// Returns true if value is represented as PTR in WASM stack
-    pub fn value_is_wasm_ptr(&self, val_ref: &CircomStackValueRef) -> bool {
-        return match val_ref.value_rc.borrow().kind {
-            CircomStackValueKind::MemoryPtrConst(..) => true,
-            CircomStackValueKind::TemporaryStackValue(..) => true,
-            CircomStackValueKind::ValueRef(..) => true,
-            CircomStackValueKind::ArraySliceRef(..) => true,
-            CircomStackValueKind::ArrayElementRef(..) => true,
-            CircomStackValueKind::WASMSTack(tp) => tp == WASMType::PTR,
-            CircomStackValueKind::ConstIndex(..) => false,
-            CircomStackValueKind::Index(..) => false,
-            CircomStackValueKind::Address => true,
-            CircomStackValueKind::ArrayAddress(..) => true
-        };
-    }
-
     /// Returns true if value is located in WASM stack
-    pub fn value_is_wasm(&self, val_ref: &CircomStackValueRef) -> bool {
+    pub fn value_is_wasm_stack(&self, val_ref: &CircomStackValueRef) -> bool {
         return match val_ref.value_rc.borrow().kind {
-            CircomStackValueKind::MemoryPtrConst(..) => true,
-            CircomStackValueKind::TemporaryStackValue(..) => true,
-            CircomStackValueKind::ValueRef(..) => true,
-            CircomStackValueKind::ArraySliceRef(..) => true,
-            CircomStackValueKind::ArrayElementRef(..) => true,
+            CircomStackValueKind::MemoryPtrConst(..) => false,
+            CircomStackValueKind::TemporaryStackValue(..) => false,
+            CircomStackValueKind::ValueRef(..) => false,
+            CircomStackValueKind::ArraySliceRef(..) => false,
+            CircomStackValueKind::ArrayElementRef(..) => false,
             CircomStackValueKind::WASMSTack(..) => true,
             CircomStackValueKind::ConstIndex(..) => false,
             CircomStackValueKind::Index(..) => true,
@@ -493,6 +513,35 @@ impl CircomStackFrame {
                 };
             }
             _ => {}
+        }
+    }
+
+    /// Loads value pointer onto WASM stack
+    pub fn value_load_ptr_to_wasm_stack(&mut self, val: &CircomStackValueRef) {
+        if self.value_is_wasm_stack(&val) {
+            panic!("value is already located on WASM stack");
+        }
+
+        match self.value_kind(&val) {
+            CircomStackValueKind::MemoryPtrConst(_tp, addr) => {
+                self.func.borrow_mut().gen_const(WASMType::PTR, addr as i64);
+            }
+            CircomStackValueKind::TemporaryStackValue(temp_val) => {
+                temp_val.load_ptr_to_wasm_stack(self);
+            }
+            CircomStackValueKind::ValueRef(val) => {
+                val.load_ptr_to_wasm_stack(self);
+            }
+            CircomStackValueKind::ArraySliceRef(arr, offset, _size) => {
+                arr.load_array_element_ptr_to_wasm_stack(self, offset);
+            }
+            CircomStackValueKind::ArrayElementRef(arr, offset) => {
+                arr.load_array_element_ptr_to_wasm_stack(self, offset);
+            }
+            _ => {
+                // should be handled by WASM check at the beginning of function
+                panic!("should not reach here");
+            }
         }
     }
 
@@ -658,7 +707,7 @@ impl CircomStackFrame {
                     mem_stack_drop_count += 1;
                 }
 
-                if self.value_is_wasm(&val) {
+                if self.value_is_wasm_stack(&val) {
                     // dropping value from wasm stack
                     wasm_stack_drop_count += 1;
                 }
@@ -826,9 +875,6 @@ impl CircomStackFrame {
             // adding value onto logical stack
             self.push(CircomStackValueKind::TemporaryStackValue(temp_val.clone()));
 
-            // generating value address in WASM stack
-            temp_val.gen_addr(self);
-
             // initializing FR value in Ligetron
             match &types[idx] {
                 CircomValueType::FR => {
@@ -860,6 +906,18 @@ impl CircomStackFrame {
         return vals[0].clone();
     }
 
+    /// Loads pointer to temporary value onto WASM stack
+    pub fn load_temp_value_ptr_to_wasm_stack(&mut self, val: &TemporaryStackValueRef) {
+        val.load_ptr_to_wasm_stack(self);
+    }
+
+    /// Loads pointer to temporary array value element onto WASM stack
+    pub fn load_temp_value_array_element_ptr_to_wasm_stack(&mut self,
+                                                           val: &TemporaryStackValueRef,
+                                                           index: usize) {
+        val.gen_addr_const(self, index);
+    }
+
 
     ////////////////////////////////////////////////////////////
     /// References
@@ -876,7 +934,6 @@ impl CircomStackFrame {
 
     /// Loads reference to value on stack
     pub fn load_ref<T: ConvertibleToValueRef>(&mut self, val: &T) {
-        val.gen_addr(self);
         self.push(CircomStackValueKind::ValueRef(val.to_ref()));
     }
 
@@ -886,7 +943,7 @@ impl CircomStackFrame {
 
         // checking parameter type
         match self.value_ref_type(&arr_ref) {
-            CircomValueType::FRArray(sz) => {
+            CircomValueType::FRArray(..) => {
             }
             _ => {
                 panic!("Can't get reference to local variable subarray of non array value");
@@ -896,8 +953,6 @@ impl CircomStackFrame {
         // calculating value address
         match self.top(0).value_rc.borrow().kind {
             CircomStackValueKind::ConstIndex(value) => {
-                arr.gen_addr_const(self, value as usize);
-
                 self.pop(1);
                 self.push(CircomStackValueKind::ArraySliceRef(arr.to_ref(), value as usize, size));
             }
@@ -928,8 +983,6 @@ impl CircomStackFrame {
         // calculating value address
         match self.top(0).value_rc.borrow().kind {
             CircomStackValueKind::ConstIndex(value) => {
-                arr.gen_addr_const(self, value as usize);
-
                 self.pop(1);
                 self.push(CircomStackValueKind::ArrayElementRef(arr.to_ref(), value as usize));
             }
@@ -943,17 +996,6 @@ impl CircomStackFrame {
                 panic!("top stack value is not an index");
             }
         }
-    }
-
-    /// Converts reference value located on top of stack at specified index to WASM PTR value
-    pub fn convert_ref_to_wasm_ptr(&self, idx: usize) {
-        let val_ref = self.top(idx);
-
-        if !self.value_is_wasm_ptr(&val_ref) {
-            panic!("value on top of stack is not representable as WASM ptr");
-        }
-
-        val_ref.value_rc.borrow_mut().kind = CircomStackValueKind::WASMSTack(WASMType::PTR);
     }
 
 
@@ -1097,6 +1139,54 @@ impl CircomStackFrame {
 
     ////////////////////////////////////////////////////////////
     /// Call operation
+    
+    /// Loads specified number of top stack values onto WASM stack
+    pub fn load_values_to_wasm_stack(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+
+        // We need to put all parameters onto WASM stack in correct order. For that,
+        // we first store all parameters located on WASM stack to temporary locals and
+        // then load them again
+
+        let mut params_locals = Vec::<Option<WASMLocalVariableRef>>::new();
+        for _ in 0 .. count {
+            params_locals.push(None);
+        }
+
+        // saving parameters already located on WASM stack to WASM locals 
+        for val_idx in 0 .. count {
+            let val = self.top(val_idx);
+            if self.value_is_wasm_stack(&val) {
+                let val_type = self.value_type(&val);
+                let wasm_t = match val_type {
+                    CircomValueType::WASM(wt) => wt,
+                    CircomValueType::FR => WASMType::PTR,
+                    CircomValueType::FRArray(..) => WASMType::PTR
+                };
+
+                // saving parameter from WASM stack to temporary local
+                let tmp_local = self.func.borrow_mut().new_wasm_local(wasm_t);
+                self.func.borrow_mut().gen_local_set(&tmp_local);
+                params_locals[val_idx] = Some(tmp_local);
+            }
+        }
+
+        // loading parameters onto WASM stack
+        for param_idx in 0 .. count {
+            let val_idx = count - param_idx - 1;
+            match &params_locals[val_idx] {
+                Some(wasm_local) => {
+                    self.func.borrow_mut().gen_local_get(&wasm_local);
+                }
+                None => {
+                    // loading parameter onto WASM stack using generic load
+                    self.value_load_ptr_to_wasm_stack(&self.top(val_idx));
+                }
+            }
+        }
+    }
 
     /// Generates call to function passing values located on top of stack as parameters
     pub fn gen_call(&mut self, func_ref: &CircomFunctionRef) {
@@ -1116,13 +1206,8 @@ impl CircomStackFrame {
             }
         }
 
-        // // loading parameters onto WASM stack
-        // if num_stack_vals != 0 {
-        //     for val_idx in num_stack_vals - 1 .. 0 {
-        //         let param = self.top(val_idx);
-        //     }
-        // }
-
+        self.load_values_to_wasm_stack(num_stack_vals);
+ 
         // Generating call instruction
         self.func.borrow_mut().gen_call(&func_ref.to_wasm());
 
