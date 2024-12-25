@@ -530,7 +530,9 @@ impl CircomFunction {
 
     /// Loads value stored in WASM local on top of stack
     pub fn load_wasm_local(&mut self, loc: &WASMLocalVariableRef) {
-        self.frame.load_wasm_local(loc);
+        let (_, tp) = self.func.borrow_mut().local(loc);
+        self.func.borrow_mut().gen_local_get(loc);
+        self.frame.push_wasm_stack(tp);
     }
 
 
