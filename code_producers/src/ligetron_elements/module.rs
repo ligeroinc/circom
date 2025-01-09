@@ -246,4 +246,9 @@ impl CircomModule {
     pub fn main_comp_run_function(&self) -> CircomFunctionRef {
         return self.templ_run_function(self.info.main_comp_id);
     }
+
+    /// Returns template info for main component
+    pub fn main_comp_template(&self) -> &TemplateInfo {
+        return &self.info.templates[&self.info.main_comp_id];
+    }
 }

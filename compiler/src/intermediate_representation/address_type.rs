@@ -65,6 +65,20 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
         }
     };
 
+    // loading subcomponent address
+    match &addr_t {
+        AddressType::SubcmpSignal { cmp_address, .. } => {
+            // generating code for calculating subcomponent index
+            let old_comp_type = producer.set_addr_computation_type();
+            cmp_address.generate_ligetron(producer);
+            producer.set_computation_type(old_comp_type);
+
+            // loading subcomponent address
+            producer.load_subcmp_address();
+        }
+        _ => {}
+    }
+
     match &loc {
         LocationRule::Indexed { location, .. } => {
             // generating code for calculating value index
@@ -79,14 +93,8 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                 AddressType::Signal => {
                     producer.load_signal_ref(sz);
                 }
-                AddressType::SubcmpSignal { cmp_address, .. } => {
-                    // extracting subcomponent index from component address
-                    match cmp_address.as_ref() {
-                        Instruction::Value(cmp_idx_val) => {
-                            producer.load_subcmp_signal_ref(cmp_idx_val.value, sz);
-                        },
-                        _ => { panic!("subcomponent address is not a constant value"); }
-                    };
+                AddressType::SubcmpSignal { .. } => {
+                    producer.load_subcmp_signal_ref(sz);
                 }
             }
         }

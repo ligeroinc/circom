@@ -3,12 +3,17 @@ use super::arrays::*;
 use super::log::*;
 use super::memory_stack::*;
 use super::stack::*;
+use super::temp::*;
+use super::template::*;
 use super::types::*;
+use super::value::*;
 use super::wasm::*;
 use super::CircomModule;
+use super::TemplateInfo;
 
 use num_bigint_dig::BigInt;
 
+use std::path::Component;
 use std::rc::Rc;
 use std::cell::{RefCell, RefMut};
 
@@ -93,12 +98,17 @@ impl CircomFunction {
                 if loc_info.size == 1 {
                     CircomValueType::FR
                 } else {
-                    CircomValueType::FRArray(loc_info.size)
+                    CircomValueType::Array(Box::new(CircomValueType::FR), loc_info.size)
                 }
             };
 
             let _ = self.new_circom_local_var(idx, tp);
         }
+    }
+
+    /// Returns Rc to WASM function
+    pub fn wasm_func_rc(&self) -> &Rc<RefCell<WASMFunction>> {
+        return &self.func;
     }
 
     /// Returns reference to parent Circom module
@@ -112,7 +122,12 @@ impl CircomFunction {
     }
 
     /// Returns reference to Circom stack frame
-    pub fn get_frame(&mut self) -> &mut CircomStackFrame {
+    pub fn get_frame(&self) -> &CircomStackFrame {
+        return &self.frame;
+    }
+
+    /// Returns reference to Circom stack frame
+    pub fn get_frame_mut(&mut self) -> &mut CircomStackFrame {
         return &mut self.frame;
     }
 
@@ -172,7 +187,7 @@ impl CircomFunction {
     /// Loads bigint const from i64 value
     pub fn load_bigint_i64_const(&mut self, val: i64) {
         let tmp_val = self.alloc_temp(CircomValueType::FR);
-        self.load_ref(tmp_val);
+        self.load_ref(Box::new(tmp_val));
         self.load_wasm_const(WASMType::I64, val);
         let fp256_set_ui = self.module_ref().ligetron().fp256_set_ui.clone();
         self.gen_call(&fp256_set_ui);
@@ -272,30 +287,41 @@ impl CircomFunction {
         self.frame.load_temp_value_ptr_to_wasm_stack(val);
     }
 
+    /// Allocates component as temporary stack value
+    pub fn alloc_temp_component(&mut self, template: TemplateInfo) -> CircomComponent {
+        return CircomComponent::allocate(template, |tp| {
+            return Box::new(self.alloc_temp(tp));
+        });
+    }
+
 
     ////////////////////////////////////////////////////////////
     /// References
 
     /// Loads reference to value on stack
-    pub fn load_ref<T: CircomValueRef + 'static>(&mut self, val: T) {
+    pub fn load_ref(&mut self, val: Box<dyn CircomValueRef>) {
         self.frame.load_ref(val);
     }
 
     /// Loads reference to subarray of array to stack
-    pub fn load_array_slice_ref<T: CircomValueRef + 'static>(&mut self, arr: T, size: usize) {
+    pub fn load_array_slice_ref(&mut self, arr: Box<dyn CircomValueRef>, size: usize) {
         self.frame.load_array_slice_ref(arr, size);
     }
 
     /// Loads reference to element of array to stack using top stack address value as offset
-    pub fn load_array_element_ref<T: CircomValueRef + 'static>(&mut self, arr: T) {
-        self.frame.load_array_element_ref(arr);
+    pub fn load_array_element_ref(&mut self, arr: Box<dyn CircomValueRef>) {
+        self.frame.load_array_element_ref(arr, CircomValueType::FR);
     }
 
     /// Generates loading of pointer to array element with const index onto WASM stack
     pub fn gen_load_array_element_ptr_to_wasm_stack_const(&mut self,
                                                           val: &TemporaryStackValueRef,
                                                           index: usize) {
-        gen_load_array_element_ptr_to_wasm_stack_const(&mut self.frame, val, index);
+        let func_rc = self.func.clone();
+        gen_load_array_element_ptr_to_wasm_stack_const(&mut self.frame,
+                                                       val,
+                                                       index,
+                                                       &mut func_rc.borrow().inst_gen_mut());
     }
 
 
@@ -318,13 +344,13 @@ impl CircomFunction {
     }
 
     /// Returns true if index located on top of stack is const index
-    pub fn top_index_is_const(&self) -> bool {
-        return self.frame.top_index_is_const();
+    pub fn top_index_is_const(&self, idx: usize) -> bool {
+        return self.frame.top_index_is_const(idx);
     }
 
     /// Returns constant offset in index located on top of stack
-    pub fn top_index_offset(&self) -> i32 {
-        return self.frame.top_index_offset();
+    pub fn top_index_offset(&self, idx: usize) -> i32 {
+        return self.frame.top_index_offset(idx);
     }
 
 
@@ -653,7 +679,7 @@ impl CircomFunction {
 
         // loading refernce to allocated temporary stack value again to
         // make sure it will be saved after removing during call operation
-        self.frame.load_ref(val);
+        self.frame.load_ref(Box::new(val));
     }
 
     // /// Reloads allocted on stack Fr value for result operation

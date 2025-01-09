@@ -373,21 +373,6 @@ impl LocalVariablesAnalyzer {
                     LocationRule::Mapped { .. } => None
                 }
             }
-            AddressType::SubcmpSignal { cmp_address, .. } => {
-                match cmp_address.as_ref() {
-                    Instruction::Value(value_bucket) => { Some(value_bucket.value) },
-                    _ => None
-                }
-                // match &loc {
-                //     LocationRule::Indexed { location, .. } => {
-                //         match location.as_ref() {
-                //             Instruction::Value(value_bucket) => { Some(value_bucket.value) },
-                //             _ => None
-                //         }
-                //     }
-                //     LocationRule::Mapped { .. } => None
-                // }
-            }
             _ => None
         };
     }

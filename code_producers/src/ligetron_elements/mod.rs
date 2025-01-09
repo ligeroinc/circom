@@ -1,5 +1,6 @@
 
 mod arrays;
+mod constants;
 mod entry;
 mod func;
 mod ligetron;
@@ -7,9 +8,13 @@ mod log;
 mod memory_stack;
 mod module;
 mod stack;
+mod structs;
+mod temp;
 mod template;
 mod types;
+mod value;
 mod wasm;
+mod wasm_stack;
 
 pub use template::SignalKind;
 pub use template::SignalInfo;
@@ -175,8 +180,18 @@ impl LigetronProducer {
             let var = self.func().circom_locals()[real_var_idx].clone();
             let var_size = match self.func().local_var_type(&var) {
                 CircomValueType::FR => 1,
-                CircomValueType::FRArray(size) => size,
-                CircomValueType::WASM(..) => 1
+                CircomValueType::Array(tp, size) => {
+                    match tp.as_ref() {
+                        CircomValueType::FR => size,
+                        _ => {
+                            panic!("Circom variable can't be an array of WASM types")
+                        }
+                    }
+                }
+                CircomValueType::WASM(..) => 1,
+                CircomValueType::Struct(..) => {
+                    panic!("Circom variable can't be a struct");
+                }
             };
 
             if curr_idx + var_size > circom_var_offset {
@@ -196,7 +211,7 @@ impl LigetronProducer {
             // This is not requried for tempaltes because Circom compiler thinks there is no
             // parameters in template run function.
             let params_count = self.func().params_count();
-            let offset = self.func().top_index_offset();
+            let offset = self.func().top_index_offset(0);
             if (offset as usize) < params_count {
                 // loading parmaeter
 
@@ -204,7 +219,7 @@ impl LigetronProducer {
                     panic!("can't load parameter reference for store");
                 }
                 
-                if !self.func().top_index_is_const() {
+                if !self.func().top_index_is_const(0) {
                     panic!("can't load parameter with non const index");
                 }
 
@@ -214,7 +229,7 @@ impl LigetronProducer {
 
                 let par = self.func().param(offset as usize);
                 self.func().drop(1);
-                self.func().load_ref(par);
+                self.func().load_ref(Box::new(par));
 
                 return;
             } else {
@@ -227,7 +242,7 @@ impl LigetronProducer {
 
         // searching for local variable containing constant offset
 
-        let circom_var_offset = self.func().top_index_offset() as usize;
+        let circom_var_offset = self.func().top_index_offset(0) as usize;
         let mut curr_idx: usize = 0;
         let mut real_var_idx: usize = 0;
 
@@ -235,8 +250,18 @@ impl LigetronProducer {
             let var = self.func().circom_locals()[real_var_idx].clone();
             let var_size = match self.func().local_var_type(&var) {
                 CircomValueType::FR => 1,
-                CircomValueType::FRArray(size) => size,
-                CircomValueType::WASM(..) => 1
+                CircomValueType::Array(tp, size) => {
+                    match tp.as_ref() {
+                        CircomValueType::FR => size,
+                        _ => {
+                            panic!("Circom variable can't be an array of WASM types")
+                        }
+                    }
+                }
+                CircomValueType::WASM(..) => 1,
+                CircomValueType::Struct(..) => {
+                    panic!("Circom variable can't be a struct");
+                }
             };
 
             if curr_idx + var_size > circom_var_offset {
@@ -248,12 +273,12 @@ impl LigetronProducer {
                 if size == 1 {
                     if var_size == 1 {
                         self.func().drop(1);
-                        self.func().load_ref(var.clone());
+                        self.func().load_ref(Box::new(var.clone()));
                     } else {
-                        self.func().load_array_element_ref(var.clone());
+                        self.func().load_array_element_ref(Box::new(var.clone()));
                     }
                 } else {
-                    self.func().load_array_slice_ref(var.clone(), size);
+                    self.func().load_array_slice_ref(Box::new(var.clone()), size);
                 }
 
                 // if we are loading reference for store then
@@ -274,7 +299,7 @@ impl LigetronProducer {
     /// Loads reference to return value on stack
     pub fn load_ret_val_ref(&mut self) {
         let rv = self.func().ret_val(0);
-        self.func().load_ref(rv);
+        self.func().load_ref(Box::new(rv));
     }
 
 
@@ -304,7 +329,8 @@ impl LigetronProducer {
         } else if ret_vals_size == 1 {
             self.func().new_ret_val(CircomValueType::FR, None);
         } else {
-            self.func().new_ret_val(CircomValueType::FRArray(ret_vals_size), None);
+            let fr_box = Box::new(CircomValueType::FR);
+            self.func().new_ret_val(CircomValueType::Array(fr_box, ret_vals_size), None);
         }
     }
 
@@ -326,14 +352,16 @@ impl LigetronProducer {
 
     /// Starts generating new template
     pub fn new_template(&mut self,
+                        id: usize,
                         name: &str,
-                        signals: &Vec<SignalInfo>,
+                        subcomponent_count: usize,
                         locals_info: Vec<LocalVarInfo>) {
         // creating new template
         assert!(self.template_rc.is_none());
         let tgen = Template::new(self.module.clone(),
+                                 self.info.templates[&id].clone(),
                                  name.to_string(),
-                                 signals,
+                                 subcomponent_count,
                                  locals_info);
         self.template_rc = Some(RefCell::new(tgen));
 
@@ -356,20 +384,19 @@ impl LigetronProducer {
 
     /// Loads reference to signal on stack
     pub fn load_signal_ref(&mut self, size: usize) {
-        let circom_signal_offset = self.func().top_index_offset() as usize;
+        let circom_signal_offset = self.func().top_index_offset(0) as usize;
 
         let mut curr_idx: usize = 0;
         let mut real_sig_idx: usize = 0;
         loop {
-            let sig = self.template().signal(real_sig_idx);
-            let sig_size = self.template().signal_size(&sig);
+            let sig_size = self.template().signal_size(real_sig_idx);
 
             if curr_idx + sig_size > circom_signal_offset {
                 // Substracting offset located on top of stack.
                 // This should be done in compile time inside stack logic.
                 self.func().load_i32_const((curr_idx as i32) * -1);
                 self.func().index_add();
-                self.template().load_signal_ref(&sig, size);
+                self.template().load_signal_ref(real_sig_idx, size);
 
                 break;
             }
@@ -380,22 +407,25 @@ impl LigetronProducer {
     }
 
     /// Creates new subcomponent
-    pub fn create_subcmp(&mut self, subcmp_id: usize, template_id: usize) {
+    pub fn create_subcmp(&mut self, subcmp_id: usize, template_id: usize, size: usize) {
         let templ = self.info.templates.get(&template_id)
             .expect("can't find template with required ID for subcomponent");
-        self.template().create_subcmp(subcmp_id, template_id, &templ);
+        self.template().create_subcmp_n(subcmp_id, templ.clone(), size);
+    }
+
+    /// Loads address of subcomponent
+    pub fn load_subcmp_address(&mut self) {
+        self.template().load_subcmp_address();
     }
 
     /// Loads reference to subcomponent signal
-    pub fn load_subcmp_signal_ref(&mut self, subcmp_idx: usize, size: usize) {
-        self.template().load_subcmp_signal_ref(subcmp_idx, size);
+    pub fn load_subcmp_signal_ref(&mut self, size: usize) {
+        self.template().load_subcmp_signal_ref(size);
     }
 
     /// Generates code for running subcomponent after store to signal
-    pub fn gen_subcmp_run(&mut self, subcmp_idx: usize, sig_size: usize) {
-        let tid = self.template().subcmp_template_id(subcmp_idx);
-        let run_func = self.module_ref().templ_run_function(tid);
-        self.template().gen_subcmp_run(subcmp_idx, sig_size, run_func);
+    pub fn gen_subcmp_run(&mut self, sig_size: usize) {
+        self.template().gen_subcmp_run(sig_size);
     }
 
 

@@ -484,13 +484,24 @@ impl GenerateLigetron for StoreBucket {
         // generating component run code if storing in subcomponent signals
         match &self.dest_address_type {
             AddressType::SubcmpSignal { cmp_address, .. } => {
-                match cmp_address.as_ref() {
-                    Instruction::Value(cmp_idx_val) => {
-                        producer.gen_subcmp_run(cmp_idx_val.value, store_size);
-                    },
-                    _ => { panic!("subcomponent address is not a constant value"); }
+                producer.debug_dump_state("before load subcomponent index for run");
 
-                }
+                // generating code for calculating subcomponent index
+                let old_comp_type = producer.set_addr_computation_type();
+                cmp_address.generate_ligetron(producer);
+                producer.set_computation_type(old_comp_type);
+
+                producer.debug_dump_state("after load subcomponent index for run");
+
+                // loading subcomponent address
+                producer.load_subcmp_address();
+
+                producer.debug_dump_state("after load subcomponent address for run");
+
+                // generating run code
+                producer.gen_subcmp_run(store_size);
+
+                producer.debug_dump_state("after subcomponent run");
             }
             _ => {}
         }

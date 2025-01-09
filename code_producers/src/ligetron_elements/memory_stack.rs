@@ -119,7 +119,7 @@ impl MemoryStackValueRef {
         return self.value_rc.borrow().dump_ref();
     }
 
-    /// Dumps memory value to string
+    /// Dumps memory value to stringp
     pub fn dump(&self, dump_idx: bool) -> String {
         return self.value_rc.borrow().dump(dump_idx);
     }
@@ -286,17 +286,16 @@ impl MemoryStackFrame {
     }
 
     /// Generates loading address of memory stack local to WASM stack
-    pub fn gen_load_local_addr(&self, loc_ref: &MemoryStackLocalRef) {
-        let loc = &self.locals[loc_ref.idx];
-        self.inst_gen.borrow_mut().gen_local_get(&self.frame_base);
-        if loc.offset != 0 {
-            self.inst_gen.borrow_mut().gen_const(WASMType::I32, loc.offset as i64);
-            self.inst_gen.borrow_mut().gen_add(WASMType::PTR);
-        }
+    pub fn gen_load_local_addr(&self, loc_ref: &MemoryStackLocalRef, offset: usize) {
+        self.gen_load_local_addr_igen(loc_ref, offset, &mut self.inst_gen.borrow_mut());
     }
 
-    /// Generates loading address of memory stack value to WASM stack
-    pub fn gen_load_value_addr(&self, val_ref: &MemoryStackValueRef, offset: usize) {
+    /// Generates loading address of memory stack value to WASM stack for specified 
+    /// instruction generator
+    pub fn gen_load_value_addr_igen(&self,
+                                    val_ref: &MemoryStackValueRef,
+                                    offset: usize,
+                                    inst_gen: &mut InstructionGenerator) {
         let val = val_ref.value_rc.borrow();
 
         if val.deallocated {
@@ -312,11 +311,16 @@ impl MemoryStackFrame {
         }
 
         let val_stack_ptr_offset = self.stack_size - val.offset - offset;
-        self.inst_gen.borrow_mut().gen_global_get(&self.stack_ptr);
+        inst_gen.gen_global_get(&self.stack_ptr);
         if val_stack_ptr_offset != 0 {
-            self.inst_gen.borrow_mut().gen_const(WASMType::I32, -1 * val_stack_ptr_offset as i64);
-            self.inst_gen.borrow_mut().gen_add(WASMType::PTR);
+            inst_gen.gen_const(WASMType::I32, -1 * val_stack_ptr_offset as i64);
+            inst_gen.gen_add(WASMType::PTR);
         }
+    }
+
+    /// Generates loading address of memory stack value to WASM stack
+    pub fn gen_load_value_addr(&self, val_ref: &MemoryStackValueRef, offset: usize) {
+        self.gen_load_value_addr_igen(val_ref, offset, &mut self.inst_gen.borrow_mut());
     }
 
     /// Generates function entry code for allocating stack

@@ -174,7 +174,7 @@ impl GenerateLigetron for TemplateCodeInfo {
         let local_vars = build_variables_info(&self.body, &self.variables, 0);
 
         // starting new template
-        producer.new_template(&self.header, &signals, local_vars);
+        producer.new_template(self.id, &self.header, self.number_of_components, local_vars);
 
         // generating template body
         for inst in &self.body {

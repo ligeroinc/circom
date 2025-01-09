@@ -217,7 +217,7 @@ impl GenerateLigetron for CreateCmpBucket {
             }
         };
 
-        producer.create_subcmp(subcmp_id, self.template_id);
+        producer.create_subcmp(subcmp_id, self.template_id, self.number_of_cmp);
 
         producer.debug_dump_state("after create component bucket");
         producer.gen_comment("create component bucket end");

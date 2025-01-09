@@ -1,7 +1,6 @@
 
 use super::func::*;
 use super::module::*;
-use super::stack::CircomValueRef;
 use super::types::*;
 use super::wasm::*;
 
@@ -98,78 +97,37 @@ pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
     // TODO: check error code
     func.gen_wasm_drop();
 
-    let main_comp_func = module.borrow_mut().main_comp_run_function();
+    // allocating main component
+    func.gen_wasm_comment("allocating fp256 values for main component");
+    let main_comp = func.alloc_temp_component(module.borrow().main_comp_template().clone());
 
-    func.debug_dump_state("BEFORE ENTRY RESULTS");
+    // initializing FR values from program arguments
+    func.gen_wasm_comment("initializing fp256 values for porgram arguments");
+    for arg_idx in 0 .. main_comp.main_parameters_count() {
+        // pointer to FR value
+        let sig_ref = main_comp.main_parameter(arg_idx);
+        sig_ref.gen_load_ptr_to_wasm_stack(&mut func.wasm_func_rc().borrow().inst_gen_mut(),
+                                           func.get_frame());
 
-    // allocating FR array for results
-    func.gen_wasm_comment("allocating Fr array for main component results");
-    let ret_vals = func.alloc_temp_n(main_comp_func.tp().ret_types());
+        // pointer to string with number
+        func.gen_wasm_local_get(&args_pointers);
+        func.gen_wasm_const(WASMType::I32, ((arg_idx + 1) * 4) as i64);
+        func.gen_wasm_add(WASMType::PTR);
+        func.gen_wasm_load(WASMType::PTR);
 
-    func.debug_dump_state("AFTER ENTRY RESULTS");
+        // number base
+        func.gen_wasm_const(WASMType::I32, 10);
 
-    // creating FR values from program arguments
-
-    func.gen_wasm_comment("creating Fr array for porgram arguments");
-    let fr_args = func.alloc_temp_n(main_comp_func.tp().params());
-
-    let mut arg_idx = 1;
-    for (fr_arg_idx, par_type) in main_comp_func.tp().params().iter().enumerate() {
-        match par_type {
-            CircomValueType::FRArray(size) => {
-                for i in 0 .. *size {
-                    // pointer to FR value
-                    func.gen_load_array_element_ptr_to_wasm_stack_const(&fr_args[fr_arg_idx], i);
-
-                    // pointer to string with number
-                    func.gen_wasm_local_get(&args_pointers);
-                    func.gen_wasm_const(WASMType::I32, (arg_idx * 4) as i64);
-                    func.gen_wasm_add(WASMType::PTR);
-                    func.gen_wasm_load(WASMType::PTR);
-
-                    // number base
-                    func.gen_wasm_const(WASMType::I32, 10);
-
-                    let fp256_set_str = &&module.borrow_mut().ligetron().fp256_set_str.clone();
-                    func.gen_wasm_call(&fp256_set_str.to_wasm());
-                    func.gen_wasm_drop();
-
-                    arg_idx += 1;
-                }
-            }
-            CircomValueType::FR => {
-                // pointer to FR value
-                func.load_temp_value_ptr_to_wasm_stack(&fr_args[fr_arg_idx]);
-
-                // pointer to string with number
-                func.gen_wasm_local_get(&args_pointers);
-                func.gen_wasm_const(WASMType::I32, (arg_idx * 4) as i64);
-                func.gen_wasm_add(WASMType::PTR);
-                func.gen_wasm_load(WASMType::PTR);
-
-                // number base
-                func.gen_wasm_const(WASMType::I32, 10);
-
-                let fp256_set_str = module.borrow_mut().ligetron().fp256_set_str.clone();
-                func.debug_dump_state("BEFORE ARG SET STR");
-                func.gen_wasm_call(&fp256_set_str.to_wasm());
-                func.debug_dump_state("AFTER ARG SET STR");
-                func.gen_wasm_drop();
-
-                arg_idx += 1;
-            }
-            CircomValueType::WASM(..) => {
-                panic!("Component function can't have wasm parameters");
-            }
-        }
+        let fp256_set_str = &&module.borrow_mut().ligetron().fp256_set_str.clone();
+        func.gen_wasm_call(&fp256_set_str.to_wasm());
+        func.gen_wasm_drop();
     }
 
     func.debug_dump_state("AFTER ENTRY ARGUMENTS");
 
     // executing main component
     func.gen_wasm_comment("executing main component");
-    let main_func = module.borrow_mut().main_comp_run_function();
-    func.gen_call(&main_func);
+    func.gen_call(&main_comp.run_func());
 
     // calling exit function at the end of entry function
     // TODO: pass correct exit code?

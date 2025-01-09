@@ -3,11 +3,12 @@ use super::wasm::*;
 
 
 /// Value type. Can be FR type of WASM type
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum CircomValueType {
     WASM(WASMType),
     FR,
-    FRArray(usize)
+    Array(Box<CircomValueType>, usize),
+    Struct(CircomStructType)
 }
 
 impl CircomValueType {
@@ -15,13 +16,14 @@ impl CircomValueType {
         return match self {
             CircomValueType::WASM(_) => true,
             CircomValueType::FR => false,
-            CircomValueType::FRArray(_) => false
+            CircomValueType::Array(tp, _size) => tp.is_wasm(),
+            CircomValueType::Struct(_) => false
         }
     }
 
     pub fn is_fr_array(&self) -> bool {
         return match self {
-            CircomValueType::FRArray(..) => true,
+            CircomValueType::Array(tp, _size) => tp.is_fr(),
             _ => false
         }
     }
@@ -35,7 +37,8 @@ impl CircomValueType {
         return match self {
             CircomValueType::WASM(wasm_type) => wasm_type.size(),
             CircomValueType::FR => 4,
-            CircomValueType::FRArray(sz) => CircomValueType::FR.size() * sz
+            CircomValueType::Array(tp, size) => tp.size() * size,
+            CircomValueType::Struct(str) => str.size()
         }
     }
 
@@ -44,8 +47,45 @@ impl CircomValueType {
         return match self {
             CircomValueType::WASM(wasm_type) => wasm_type.to_string(),
             CircomValueType::FR => "fr".to_string(),
-            CircomValueType::FRArray(sz) => format!("fr[{}]", sz)
+            CircomValueType::Array(tp, sz) => format!("{}[{}]", tp.to_string(), sz),
+            CircomValueType::Struct(str) => {
+                let mut res = "struct { ".to_string();
+                res += &str.fields.iter().map(|fld| { fld.to_string() })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                res += " }";
+                return res;
+            }
         }
+    }
+}
+
+
+/// Struct type
+#[derive(Clone)]
+pub struct CircomStructType {
+    pub fields: Vec<CircomValueType>
+}
+
+impl CircomStructType {
+    /// Returns size of struct ype
+    pub fn size(&self) -> usize {
+        let mut sz = 0;
+        for field in &self.fields {
+            sz += field.size();
+        }
+
+        return sz;
+    }
+
+    /// Returns offset of struct field with specified index
+    pub fn field_offset(&self, index: usize) -> usize {
+        let mut offset = 0;
+        for idx in 0 .. index {
+            offset += self.fields[idx].size();
+        }
+
+        return offset;
     }
 }
 
@@ -125,7 +165,10 @@ impl CircomFunctionType {
                 CircomValueType::FR => {
                     wasm_func_type.add_param(WASMType::PTR);
                 },
-                CircomValueType::FRArray(_) => {
+                CircomValueType::Array(_, _) => {
+                    wasm_func_type.add_param(WASMType::PTR);
+                }
+                CircomValueType::Struct(_) => {
                     wasm_func_type.add_param(WASMType::PTR);
                 }
             }
@@ -139,7 +182,10 @@ impl CircomFunctionType {
                 CircomValueType::FR => {
                     wasm_func_type.add_param(WASMType::PTR);
                 },
-                CircomValueType::FRArray(_) => {
+                CircomValueType::Array(..) => {
+                    wasm_func_type.add_param(WASMType::PTR);
+                },
+                CircomValueType::Struct(_) => {
                     wasm_func_type.add_param(WASMType::PTR);
                 }
             }
