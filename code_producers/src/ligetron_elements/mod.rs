@@ -213,7 +213,7 @@ impl LigetronProducer {
 
                 let par = self.func().param(offset as usize);
                 self.func().drop(1);
-                self.func().load_ref(&par);
+                self.func().load_ref(par);
 
                 return;
             } else {
@@ -247,12 +247,12 @@ impl LigetronProducer {
                 if size == 1 {
                     if var_size == 1 {
                         self.func().drop(1);
-                        self.func().load_ref(&var);
+                        self.func().load_ref(var.clone());
                     } else {
-                        self.func().load_array_element_ref(&var);
+                        self.func().load_array_element_ref(var.clone());
                     }
                 } else {
-                    self.func().load_array_slice_ref(&var, size);
+                    self.func().load_array_slice_ref(var.clone(), size);
                 }
 
                 // if we are loading reference for store then
@@ -273,7 +273,7 @@ impl LigetronProducer {
     /// Loads reference to return value on stack
     pub fn load_ret_val_ref(&mut self) {
         let rv = self.func().ret_val(0);
-        self.func().load_ref(&rv);
+        self.func().load_ref(rv);
     }
 
 

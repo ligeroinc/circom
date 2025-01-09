@@ -77,7 +77,7 @@ pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
     func.gen_wasm_add(WASMType::PTR);
     func.gen_wasm_global_set(&stack_ptr);
 
-    
+
     // getting arguments
     let args_get = module.borrow_mut().wasm_module().import_function(
         "args_get",

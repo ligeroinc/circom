@@ -279,38 +279,38 @@ impl Template {
                 self.func().drop(1);
                 match sig {
                     Signal::Input(par) => {
-                        self.func().load_ref(par);
+                        self.func().load_ref(par.clone());
                     }
                     Signal::Output(ret_val) => {
-                        self.func().load_ref(ret_val);
+                        self.func().load_ref(ret_val.clone());
                     }
                     Signal::Intermediate(loc_var) => {
-                        self.func().load_ref(loc_var);
+                        self.func().load_ref(loc_var.clone());
                     }
                 }
             } else {
                 match sig {
                     Signal::Input(par) => {
-                        self.func().load_array_element_ref(par);
+                        self.func().load_array_element_ref(par.clone());
                     }
                     Signal::Output(ret_val) => {
-                        self.func().load_array_element_ref(ret_val);
+                        self.func().load_array_element_ref(ret_val.clone());
                     }
                     Signal::Intermediate(loc_var) => {
-                        self.func().load_array_element_ref(loc_var);
+                        self.func().load_array_element_ref(loc_var.clone());
                     }
                 }
             }
         } else {
             match sig {
                 Signal::Input(par) => {
-                    self.func().load_array_slice_ref(par, size);
+                    self.func().load_array_slice_ref(par.clone(), size);
                 }
                 Signal::Output(ret_val) => {
-                    self.func().load_array_slice_ref(ret_val, size);
+                    self.func().load_array_slice_ref(ret_val.clone(), size);
                 }
                 Signal::Intermediate(loc_var) => {
-                    self.func().load_array_slice_ref(loc_var, size);
+                    self.func().load_array_slice_ref(loc_var.clone(), size);
                 }
             }
         }
@@ -437,12 +437,12 @@ impl Template {
                        sig_size == 1 {
 
                         self.func().drop(1);
-                        self.func().load_ref(sig_var);
+                        self.func().load_ref(sig_var.clone());
                     } else {
-                        self.func().load_array_element_ref(sig_var);
+                        self.func().load_array_element_ref(sig_var.clone());
                     }
                 } else {
-                    self.func().load_array_slice_ref(sig_var, size);
+                    self.func().load_array_slice_ref(sig_var.clone(), size);
                 }
 
                 break;
@@ -481,7 +481,7 @@ impl Template {
         for sig in &comp.signals {
             match sig {
                 SubcomponentSignal::Output(var) => {
-                    self.func().load_ref(var);
+                    self.func().load_ref(var.clone());
                 }
                 _ => {}
             }
@@ -491,7 +491,7 @@ impl Template {
         for sig in &comp.signals {
             match sig {
                 SubcomponentSignal::Input(var) => {
-                    self.func().load_ref(var);
+                    self.func().load_ref(var.clone());
                 }
                 _ => {}
             }

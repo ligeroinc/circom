@@ -169,65 +169,27 @@ impl TemporaryStackValueRef {
 }
 
 
-#[derive(Clone)]
-pub enum CircomValueRef {
-    LocalVariable(CircomLocalVariableRef),
-    Parameter(CircomParameterRef),
-    ReturnValue(CircomReturnValueRef),
-    TemporaryStackValue(TemporaryStackValueRef)
-}
+pub trait CircomValueRef {
+    /// Clones value reference
+    fn clone_ref(&self) -> Box<dyn CircomValueRef>;
 
-impl CircomValueRef {
+    /// Dumps reference information to string in short form
+    fn dump_ref(&self, frame: &CircomStackFrame) -> String;
+
+    /// Dumps value to string
+    fn dump(&self, frame: &CircomStackFrame) -> String;
+
+    /// Returns value type
+    fn xtype<'a, 'b>(&'a self, frame: &'b CircomStackFrame) -> &'b CircomValueType where 'a: 'b;
+
     /// Generates loading of value ptr onto WASM stack
-    pub fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
-        match self {
-            CircomValueRef::LocalVariable(var) => {
-                var.load_ptr_to_wasm_stack(frame);
-            }
-            CircomValueRef::Parameter(par) => {
-                par.load_ptr_to_wasm_stack(frame);
-            }
-            CircomValueRef::ReturnValue(ret_val) => {
-                ret_val.load_ptr_to_wasm_stack(frame);
-            }
-            CircomValueRef::TemporaryStackValue(val) => {
-                val.load_ptr_to_wasm_stack(frame);
-            }
-        }
-    }
+    fn gen_load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame);
 
-    /// Generates loading of array element ptr onto WASM stack
-    pub fn load_array_element_ptr_to_wasm_stack(&self,
-                                                frame: &mut CircomStackFrame,
-                                                index: usize) {
-        match self {
-            CircomValueRef::LocalVariable(var) => {
-                var.gen_addr_const(frame, index);
-            }
-            CircomValueRef::Parameter(par) => {
-                par.gen_addr_const(frame, index);
-            }
-            CircomValueRef::ReturnValue(ret_val) => {
-                ret_val.gen_addr_const(frame, index);
-            }
-            CircomValueRef::TemporaryStackValue(val) => {
-                val.gen_addr_const(frame, index);
-            }
-        }
-    }
-}
-
-
-pub trait ConvertibleToValueRef {
-    /// Converts value to reference
-    fn to_ref(&self) -> CircomValueRef;
-
-    /// Generates loading of pointer to value onto WASM stack
-    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame);
-
-    /// Generates address of array element at specified constant index
-    fn gen_addr_const(&self, frame: &mut CircomStackFrame, index: usize) {
-        self.load_ptr_to_wasm_stack(frame);
+    /// Generates loading of array element ptr at constant index onto WASM stack
+    fn gen_load_array_element_ptr_to_wasm_stack_const(&self, frame:
+                                                      &mut CircomStackFrame,
+                                                      index: usize) {
+        self.gen_load_ptr_to_wasm_stack(frame);
 
         let byte_offset = index * CircomValueType::FR.size();
         if byte_offset != 0 {
@@ -236,8 +198,10 @@ pub trait ConvertibleToValueRef {
         }
     }
 
-    /// Generates address of array element at dynamic index
-    fn gen_addr_dyn(&self, frame: &mut CircomStackFrame, offset: usize) {
+    /// Generates loading of address of array element at dynamic index onto WASM stack
+    fn gen_load_array_element_ptr_to_wasm_stack_dyn(&self, frame:
+                                                    &mut CircomStackFrame,
+                                                    offset: usize) {
         // calculating byte offset from index located in WASM stack
         if offset != 0 {
             frame.func.borrow_mut().gen_const(WASMType::I32, offset as i64);
@@ -248,66 +212,155 @@ pub trait ConvertibleToValueRef {
         frame.func.borrow_mut().gen_mul(WASMType::I32);
 
         // calculating value address
-        self.load_ptr_to_wasm_stack(frame);
+        self.gen_load_ptr_to_wasm_stack(frame);
         frame.func.borrow_mut().gen_add(WASMType::PTR);
     }
 }
 
-impl ConvertibleToValueRef for CircomLocalVariableRef {
-    fn to_ref(&self) -> CircomValueRef {
-        return CircomValueRef::LocalVariable(self.clone());
+
+impl CircomValueRef for CircomLocalVariableRef {
+    /// Clones value reference
+    fn clone_ref(&self) -> Box<dyn CircomValueRef> {
+        return Box::new(self.clone());
     }
 
-    /// Generates address of value
-    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
+    /// Dumps value reference to string
+    fn dump_ref(&self, frame: &CircomStackFrame) -> String {
+        return format!("LOCAL {}", frame.local_var_name(self));
+    }
+
+    /// Dumps value to string
+    fn dump(&self, frame: &CircomStackFrame) -> String {
+        let var_loc = frame.local_var_mem_loc(self);
+        let loc_str = frame.mem_frame.borrow().dump_local(var_loc);
+        format!("LOCAL {} {} {}",
+                frame.local_var_name(self),
+                frame.local_var_type(self).to_string(),
+                loc_str)
+    }
+
+    /// Returns value type
+    fn xtype<'a, 'b>(&'a self, frame: &'b CircomStackFrame) -> &'b CircomValueType where 'a: 'b {
+        return frame.local_var_type(self);
+    }
+
+    /// Generates loading of value ptr onto WASM stack
+    fn gen_load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         let mem_loc = frame.local_var_mem_loc(&self);
         frame.mem_frame.borrow_mut().gen_load_local_addr(&mem_loc);
+
     }
 }
 
-impl ConvertibleToValueRef for CircomParameterRef {
-    fn to_ref(&self) -> CircomValueRef {
-        return CircomValueRef::Parameter(self.clone());
+
+impl CircomValueRef for CircomParameterRef {
+    /// Clones value reference
+    fn clone_ref(&self) -> Box<dyn CircomValueRef> {
+        return Box::new(self.clone());
     }
 
-    /// Generates address of value
-    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
+    /// Dumps value reference to string
+    fn dump_ref(&self, frame: &CircomStackFrame) -> String {
+        return format!("PARAM {}", frame.param_name(self));
+    }
+
+    /// Dumps value to string
+    fn dump(&self, frame: &CircomStackFrame) -> String {
+        let loc = frame.param_wasm_loc(self);
+        let name = frame.param_name(self);
+        let type_str = frame.param_type(self).to_string();
+        let wasm_loc_str = frame.func.borrow().gen_local_ref(loc);
+
+        format!("PARAM {} {} {}", name, type_str, wasm_loc_str)
+    }
+
+    /// Returns value type
+    fn xtype<'a, 'b>(&'a self, frame: &'b CircomStackFrame) -> &'b CircomValueType where 'a: 'b {
+        return frame.param_type(self);
+    }
+
+    /// Generates loading of value ptr onto WASM stack
+    fn gen_load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         let ptr_wasm_loc = frame.param_wasm_loc(self);
         frame.func.borrow_mut().gen_local_get(&ptr_wasm_loc);
     }
 }
 
-impl ConvertibleToValueRef for CircomReturnValueRef {
-    fn to_ref(&self) -> CircomValueRef {
-        return CircomValueRef::ReturnValue(self.clone());
+
+impl CircomValueRef for CircomReturnValueRef {
+    /// Clones value reference
+    fn clone_ref(&self) -> Box<dyn CircomValueRef> {
+        return Box::new(self.clone());
     }
 
-    /// Generates address of value
-    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
+    /// Dumps value reference to string
+    fn dump_ref(&self, frame: &CircomStackFrame) -> String {
+        return format!("RETVAL {}", frame.ret_val_idx(self));
+    }
+
+    /// Dumps value to string
+    fn dump(&self, frame: &CircomStackFrame) -> String {
+        let loc = frame.ret_val_wasm_loc(self);
+        let name = frame.ret_val_idx(self).to_string();
+        let type_str = frame.ret_val_type(self).to_string();
+        let wasm_loc_str = frame.func.borrow().gen_local_ref(loc);
+
+        format!("RETVAL {} {} {}", name, type_str, wasm_loc_str)
+    }
+
+    /// Returns value type
+    fn xtype<'a, 'b>(&'a self, frame: &'b CircomStackFrame) -> &'b CircomValueType where 'a: 'b {
+        return frame.ret_val_type(self);
+    }
+
+    /// Generates loading of value ptr onto WASM stack
+    fn gen_load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         let ptr_wasm_loc = frame.ret_val_wasm_loc(self);
         frame.func.borrow_mut().gen_local_get(&ptr_wasm_loc);
     }
 }
 
-impl ConvertibleToValueRef for TemporaryStackValueRef {
-    fn to_ref(&self) -> CircomValueRef {
-        return CircomValueRef::TemporaryStackValue(self.clone());
+
+impl CircomValueRef for TemporaryStackValueRef {
+    /// Clones value reference
+    fn clone_ref(&self) -> Box<dyn CircomValueRef> {
+        return Box::new(self.clone());
     }
 
-    /// Generates address of value
-    fn load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
+    /// Dumps value reference to string
+    fn dump_ref(&self, _frame: &CircomStackFrame) -> String {
+        return format!("STACK #{}", self.dump_ref());
+    }
+
+    /// Dumps value to string
+    fn dump(&self, _frame: &CircomStackFrame) -> String {
+        return format!("STACK {}", self.dump());
+    }
+
+    /// Returns value type
+    fn xtype<'a, 'b>(&'a self, _frame: &'b CircomStackFrame) -> &'b CircomValueType where 'a: 'b {
+        return self.tp();
+    }
+
+    /// Generates loading of value ptr onto WASM stack
+    fn gen_load_ptr_to_wasm_stack(&self, frame: &mut CircomStackFrame) {
         frame.mem_frame.borrow_mut().gen_load_value_addr(self.mem_stack_val(), 0);
     }
 
+
     /// Generates address of array element at specified constant index
-    fn gen_addr_const(&self, frame: &mut CircomStackFrame, index: usize) {
+    fn gen_load_array_element_ptr_to_wasm_stack_const(&self,
+                                                      frame: &mut CircomStackFrame,
+                                                      index: usize) {
         let byte_offset = index * CircomValueType::FR.size();
         frame.mem_frame.borrow_mut().gen_load_value_addr(self.mem_stack_val(), byte_offset);
     }
+}
 
-    /// Generates address of array element at dynamic index
-    fn gen_addr_dyn(&self, _frame: &mut CircomStackFrame, _offset: usize) {
-        panic!("NYI");
+
+impl Clone for Box<dyn CircomValueRef> {
+    fn clone(&self) -> Box<dyn CircomValueRef> {
+        return self.clone_ref();
     }
 }
 
@@ -322,13 +375,13 @@ pub enum CircomStackValueKind {
     TemporaryStackValue(TemporaryStackValueRef),
 
     /// Reference to another value
-    ValueRef(CircomValueRef),
+    ValueRef(Box<dyn CircomValueRef>),
 
     /// Reference to subarray of another array (ref, offset, size)
-    ArraySliceRef(CircomValueRef, usize, usize),
+    ArraySliceRef(Box<dyn CircomValueRef>, usize, usize),
 
     /// Reference to element of array (ref, offset)
-    ArrayElementRef(CircomValueRef, usize),
+    ArrayElementRef(Box<dyn CircomValueRef>, usize),
 
     /// Value stored in WASM stack
     WASMSTack(WASMType),
@@ -467,7 +520,7 @@ impl CircomStackFrame {
         return match val_kind {
             CircomStackValueKind::MemoryPtrConst(tp, _) => tp.clone(),
             CircomStackValueKind::TemporaryStackValue(temp_val) => temp_val.tp().clone(),
-            CircomStackValueKind::ValueRef(val_ref) => self.value_ref_type(val_ref).clone(),
+            CircomStackValueKind::ValueRef(val_ref) => val_ref.xtype(self).clone(),
             CircomStackValueKind::ArraySliceRef(_arr, _offset, size) => {
                 CircomValueType::FRArray(*size)
             },
@@ -526,7 +579,7 @@ impl CircomStackFrame {
             CircomStackValueKind::TemporaryStackValue(val) => {
                 match val.tp() {
                     CircomValueType::FR => {
-                        self.load_ref(val);
+                        self.load_ref(val.clone());
                         let fp256_clear =
                             self.module.borrow().ligetron().fp256_clear.clone();
                         self.gen_call(&fp256_clear);
@@ -534,7 +587,7 @@ impl CircomStackFrame {
                     CircomValueType::FRArray(size) => {
                         for i in 0 .. *size {
                             self.load_i32_const(i as i32);
-                            self.load_array_element_ref(val);
+                            self.load_array_element_ref(val.clone());
                             let fp256_clear =
                                 self.module.borrow().ligetron().fp256_clear.clone();
                             self.gen_call(&fp256_clear);
@@ -556,22 +609,15 @@ impl CircomStackFrame {
             CircomStackValueKind::WASMSTack(_type) => {
                 panic!("value is already located on WASM stack");
             }
-            CircomStackValueKind::ValueRef(val) => {
-                match val {
-                    CircomValueRef::LocalVariable(var) => {
-                        let var_type = self.local_var_type(&var).clone(); 
-                        match var_type {
-                            CircomValueType::WASM(wasm_type) => {
-                                var.gen_addr_const(self, 0);
-                                self.func.borrow_mut().gen_load(wasm_type.clone());
-                            }
-                            _ => {
-                                panic!("Fr local variable can't be loaded as int to WASM stack");
-                            }
-                        }
+            CircomStackValueKind::ValueRef(val_ref) => {
+                let var_type = val_ref.xtype(self).clone();
+                match var_type {
+                    CircomValueType::WASM(wasm_type) => {
+                        val_ref.gen_load_ptr_to_wasm_stack(self);
+                        self.func.borrow_mut().gen_load(wasm_type.clone());
                     }
                     _ => {
-                        panic!("value ref can't be loaded as int to WASM stack");
+                        panic!("Fr local variable can't be loaded as int to WASM stack");
                     }
                 }
             }
@@ -592,39 +638,21 @@ impl CircomStackFrame {
                 self.func.borrow_mut().gen_const(WASMType::PTR, addr as i64);
             }
             CircomStackValueKind::TemporaryStackValue(temp_val) => {
-                temp_val.load_ptr_to_wasm_stack(self);
+                temp_val.gen_load_ptr_to_wasm_stack(self);
             }
             CircomStackValueKind::ValueRef(val) => {
-                val.load_ptr_to_wasm_stack(self);
+                val.gen_load_ptr_to_wasm_stack(self);
             }
             CircomStackValueKind::ArraySliceRef(arr, offset, _size) => {
-                arr.load_array_element_ptr_to_wasm_stack(self, offset);
+                arr.gen_load_array_element_ptr_to_wasm_stack_const(self, offset);
             }
             CircomStackValueKind::ArrayElementRef(arr, offset) => {
-                arr.load_array_element_ptr_to_wasm_stack(self, offset);
+                arr.gen_load_array_element_ptr_to_wasm_stack_const(self, offset);
             }
             _ => {
                 panic!("should not reach here");
             }
         }
-    }
-
-    /// Dumps value reference to string
-    fn dump_value_ref(&self, val: &CircomValueRef) -> String {
-        return match val {
-            CircomValueRef::LocalVariable(loc_var) => {
-                format!("LOCAL {}", self.local_var_name(loc_var))
-            }
-            CircomValueRef::Parameter(par) => {
-                format!("PARAM {}", self.param_name(par))
-            }
-            CircomValueRef::ReturnValue(ret_val) => {
-                format!("RETVAL {}", self.ret_val_idx(ret_val))
-            }
-            CircomValueRef::TemporaryStackValue(stack_val) => {
-                format!("STACK #{}", stack_val.dump_ref())
-            }
-        };
     }
 
     /// Dumps stack value to string
@@ -637,47 +665,17 @@ impl CircomStackFrame {
                 format!("STACK {}", temp_val.dump())
             }
             CircomStackValueKind::ValueRef(val_ref) => {
-                let value_str = match val_ref {
-                    CircomValueRef::LocalVariable(var) => {
-                        let var_loc = self.local_var_mem_loc(var);
-                        let loc_str = self.mem_frame.borrow().dump_local(var_loc);
-                        format!("LOCAL {} {} {}",
-                                self.local_var_name(var),
-                                self.local_var_type(var).to_string(),
-                                loc_str)
-                    }   
-                    CircomValueRef::Parameter(par) => {
-                        let loc = self.param_wasm_loc(par);
-                        let name = self.param_name(par);
-                        let type_str = self.param_type(par).to_string();
-                        let wasm_loc_str = self.func.borrow().gen_local_ref(loc);
-
-                        format!("PARAM {} {} {}", name, type_str, wasm_loc_str)
-                    }
-                    CircomValueRef::ReturnValue(ret_val) => {
-                        let loc = self.ret_val_wasm_loc(ret_val);
-                        let name = self.ret_val_idx(ret_val).to_string();
-                        let type_str = self.ret_val_type(ret_val).to_string();
-                        let wasm_loc_str = self.func.borrow().gen_local_ref(loc);
-
-                        format!("RETVAL {} {} {}", name, type_str, wasm_loc_str)
-                    }
-                    CircomValueRef::TemporaryStackValue(temp_val) => {
-                        format!("STACK {}", temp_val.dump())
-                    }
-                };
-                
-                format!("REF {}", value_str)
+                format!("REF {}", val_ref.dump(self))
             }
             CircomStackValueKind::ArraySliceRef(arr, offset, size) => {
                 format!("REF ({})[{}, {}) FR[{}]",
-                        self.dump_value_ref(arr),
+                        arr.dump_ref(self),
                         offset,
                         offset + size,
                         size)
             }
             CircomStackValueKind::ArrayElementRef(arr, offset) => {
-                format!("REF ({})[{}], FR", self.dump_value_ref(arr), offset)
+                format!("REF ({})[{}], FR", arr.dump_ref(self), offset)
             }
             CircomStackValueKind::WASMSTack(tp) => {
                 format!("WASM STACK {}", tp.to_string())
@@ -946,14 +944,14 @@ impl CircomStackFrame {
             // initializing FR value in Ligetron
             match &types[idx] {
                 CircomValueType::FR => {
-                    self.load_ref(&temp_val);
+                    self.load_ref(temp_val.clone());
                     let fp256_init = self.module.borrow().ligetron().fp256_init.clone();
                     self.gen_call(&fp256_init);
                 }
                 CircomValueType::FRArray(size) => {
                     for i in 0 .. *size {
                         self.load_i32_const(i as i32);
-                        self.load_array_element_ref(&temp_val);
+                        self.load_array_element_ref(temp_val.clone());
                         let fp256_init = self.module.borrow().ligetron().fp256_init.clone();
                         self.gen_call(&fp256_init);
                     }
@@ -976,41 +974,29 @@ impl CircomStackFrame {
 
     /// Loads pointer to temporary value onto WASM stack
     pub fn load_temp_value_ptr_to_wasm_stack(&mut self, val: &TemporaryStackValueRef) {
-        val.load_ptr_to_wasm_stack(self);
+        val.gen_load_ptr_to_wasm_stack(self);
     }
 
     /// Loads pointer to temporary array value element onto WASM stack
     pub fn load_temp_value_array_element_ptr_to_wasm_stack(&mut self,
                                                            val: &TemporaryStackValueRef,
                                                            index: usize) {
-        val.gen_addr_const(self, index);
+        val.gen_load_array_element_ptr_to_wasm_stack_const(self, index);
     }
 
 
     ////////////////////////////////////////////////////////////
     /// References
 
-    /// Returns referenced value type
-    fn value_ref_type<'a, 'b: 'a>(&'a self, val_ref: &'b CircomValueRef) -> &'a CircomValueType {
-        match val_ref {
-            CircomValueRef::LocalVariable(var) => self.local_var_type(&var),
-            CircomValueRef::Parameter(par) => self.param_type(&par),
-            CircomValueRef::ReturnValue(ret_val) => self.ret_val_type(&ret_val),
-            CircomValueRef::TemporaryStackValue(temp_val) => temp_val.tp()
-        }
-    }
-
     /// Loads reference to value on stack
-    pub fn load_ref<T: ConvertibleToValueRef>(&mut self, val: &T) {
-        self.push(CircomStackValueKind::ValueRef(val.to_ref()));
+    pub fn load_ref<T: CircomValueRef + 'static>(&mut self, val: T) {
+        self.push(CircomStackValueKind::ValueRef(Box::new(val)));
     }
 
     /// Loads reference to subarray of array to stack
-    pub fn load_array_slice_ref<T: ConvertibleToValueRef>(&mut self, arr: &T, size: usize) {
-        let arr_ref = arr.to_ref();
-
+    pub fn load_array_slice_ref<T: CircomValueRef + 'static>(&mut self, arr: T, size: usize) {
         // checking parameter type
-        match self.value_ref_type(&arr_ref) {
+        match arr.xtype(self) {
             CircomValueType::FRArray(..) => {
             }
             _ => {
@@ -1022,10 +1008,10 @@ impl CircomStackFrame {
         match self.top(0).value_rc.borrow().kind {
             CircomStackValueKind::ConstValue(value) => {
                 self.pop(1);
-                self.push(CircomStackValueKind::ArraySliceRef(arr.to_ref(), value as usize, size));
+                self.push(CircomStackValueKind::ArraySliceRef(Box::new(arr), value as usize, size));
             }
             CircomStackValueKind::Index(offset) => {
-                arr.gen_addr_dyn(self, offset as usize);
+                arr.gen_load_array_element_ptr_to_wasm_stack_dyn(self, offset as usize);
 
                 self.pop(1);
                 self.push(CircomStackValueKind::Address);
@@ -1037,11 +1023,9 @@ impl CircomStackFrame {
     }
 
     /// Loads reference to element of array to stack
-    pub fn load_array_element_ref<T: ConvertibleToValueRef>(&mut self, arr: &T) {
-        let arr_ref = arr.to_ref();
-
+    pub fn load_array_element_ref<T: CircomValueRef + 'static>(&mut self, arr: T) {
         // checking array variable type
-        match self.value_ref_type(&arr_ref) {
+        match arr.xtype(self) {
             CircomValueType::FRArray(..) => {},
             _ => {
                 panic!("Can't get reference to local variable subarray of non array value");
@@ -1052,11 +1036,10 @@ impl CircomStackFrame {
         match self.top(0).value_rc.borrow().kind {
             CircomStackValueKind::ConstValue(value) => {
                 self.pop(1);
-                self.push(CircomStackValueKind::ArrayElementRef(arr.to_ref(), value as usize));
+                self.push(CircomStackValueKind::ArrayElementRef(Box::new(arr), value as usize));
             }
             CircomStackValueKind::Index(offset) => {
-                arr.gen_addr_dyn(self, offset as usize);
-
+                arr.gen_load_array_element_ptr_to_wasm_stack_dyn(self, offset as usize);
                 self.pop(1);
                 self.push(CircomStackValueKind::Address);
             }
@@ -1665,14 +1648,14 @@ impl CircomStackFrame {
         for loc in self.locals() {
             match self.local_var_type(&loc) {
                 CircomValueType::FR => {
-                    self.load_ref(&loc);
+                    self.load_ref(loc.clone());
                     let fp256_clear = &self.module.borrow().ligetron().fp256_clear.clone();
                     self.gen_call(&fp256_clear);
                 }
                 CircomValueType::FRArray(size) => {
                     for idx in 0 .. *size {
                         self.load_i32_const(idx as i32);
-                        self.load_array_element_ref(&loc);
+                        self.load_array_element_ref(loc.clone());
                         let fp256_clear = &self.module.borrow().ligetron().fp256_clear.clone();
                         self.gen_call(&fp256_clear);
                     }

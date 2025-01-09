@@ -171,7 +171,7 @@ impl CircomFunction {
     /// Loads bigint const from i64 value
     pub fn load_bigint_i64_const(&mut self, val: i64) {
         let tmp_val = self.alloc_temp(CircomValueType::FR);
-        self.load_ref(&tmp_val);
+        self.load_ref(tmp_val);
         self.load_wasm_const(WASMType::I64, val);
         let fp256_set_ui = self.module_ref().ligetron().fp256_set_ui.clone();
         self.gen_call(&fp256_set_ui);
@@ -283,17 +283,17 @@ impl CircomFunction {
     /// References
 
     /// Loads reference to value on stack
-    pub fn load_ref<T: ConvertibleToValueRef>(&mut self, val: &T) {
+    pub fn load_ref<T: CircomValueRef + 'static>(&mut self, val: T) {
         self.frame.load_ref(val);
     }
 
     /// Loads reference to subarray of array to stack
-    pub fn load_array_slice_ref<T: ConvertibleToValueRef>(&mut self, arr: &T, size: usize) {
+    pub fn load_array_slice_ref<T: CircomValueRef + 'static>(&mut self, arr: T, size: usize) {
         self.frame.load_array_slice_ref(arr, size);
     }
 
     /// Loads reference to element of array to stack using top stack address value as offset
-    pub fn load_array_element_ref<T: ConvertibleToValueRef>(&mut self, arr: &T) {
+    pub fn load_array_element_ref<T: CircomValueRef + 'static>(&mut self, arr: T) {
         self.frame.load_array_element_ref(arr);
     }
 
@@ -652,7 +652,7 @@ impl CircomFunction {
 
         // loading refernce to allocated temporary stack value again to
         // make sure it will be saved after removing during call operation
-        self.frame.load_ref(&val);
+        self.frame.load_ref(val);
     }
 
     // /// Reloads allocted on stack Fr value for result operation
