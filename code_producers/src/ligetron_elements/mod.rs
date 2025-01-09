@@ -1,4 +1,5 @@
 
+mod arrays;
 mod entry;
 mod func;
 mod ligetron;

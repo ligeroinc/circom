@@ -1,4 +1,5 @@
 
+use super::arrays::*;
 use super::log::*;
 use super::memory_stack::*;
 use super::stack::*;
@@ -271,13 +272,6 @@ impl CircomFunction {
         self.frame.load_temp_value_ptr_to_wasm_stack(val);
     }
 
-    /// Loads pointer to temporary array value element onto WASM stack
-    pub fn load_temp_value_array_element_ptr_to_wasm_stack(&mut self,
-                                                           val: &TemporaryStackValueRef,
-                                                           index: usize) {
-        self.frame.load_temp_value_array_element_ptr_to_wasm_stack(val, index);
-    }
-
 
     ////////////////////////////////////////////////////////////
     /// References
@@ -295,6 +289,13 @@ impl CircomFunction {
     /// Loads reference to element of array to stack using top stack address value as offset
     pub fn load_array_element_ref<T: CircomValueRef + 'static>(&mut self, arr: T) {
         self.frame.load_array_element_ref(arr);
+    }
+
+    /// Generates loading of pointer to array element with const index onto WASM stack
+    pub fn gen_load_array_element_ptr_to_wasm_stack_const(&mut self,
+                                                          val: &TemporaryStackValueRef,
+                                                          index: usize) {
+        gen_load_array_element_ptr_to_wasm_stack_const(&mut self.frame, val, index);
     }
 
 

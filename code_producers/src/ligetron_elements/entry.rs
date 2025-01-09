@@ -1,6 +1,7 @@
 
 use super::func::*;
 use super::module::*;
+use super::stack::CircomValueRef;
 use super::types::*;
 use super::wasm::*;
 
@@ -118,7 +119,7 @@ pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
             CircomValueType::FRArray(size) => {
                 for i in 0 .. *size {
                     // pointer to FR value
-                    func.load_temp_value_array_element_ptr_to_wasm_stack(&fr_args[fr_arg_idx], i);
+                    func.gen_load_array_element_ptr_to_wasm_stack_const(&fr_args[fr_arg_idx], i);
 
                     // pointer to string with number
                     func.gen_wasm_local_get(&args_pointers);
