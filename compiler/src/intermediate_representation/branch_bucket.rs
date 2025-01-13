@@ -103,8 +103,11 @@ impl GenerateLigetron for BranchBucket {
         producer.debug_dump_state("before loop bucket");
         producer.gen_comment("loop bucket begin");
 
+        // generating condition check using int computatation mode
+        let old_comp_type = producer.set_int_computation_type();
         self.cond.generate_ligetron(producer);
         producer.gen_if();
+        producer.set_computation_type(old_comp_type);
 
         for inst in &self.if_branch {
             inst.generate_ligetron(producer);
