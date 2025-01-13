@@ -815,9 +815,14 @@ impl LigetronProducer {
 
     /// Starts generating if-else block using current stack value as condition
     pub fn gen_if(&mut self) {
-        panic!("Not implemented for fp256");
-        // self.func().gen_call(&self.module_ref().fr().is_true);
-        // self.func().gen_wasm_if();
+        if self.is_computation_type_fr() {
+            panic!("Not implemented for fp256");
+            // self.func().gen_call(&self.module_ref().fr().is_true);
+            // self.func().gen_wasm_if();
+        } else {
+            //self.func().gen_wasm_eqz(WASMType::I32);
+            self.func().gen_wasm_if();
+        }
     }
 
     /// Starts generating else block
