@@ -368,13 +368,23 @@ impl CircomFunction {
     }
 
     /// Creates new Circom function parameter with specified name
-    pub fn new_circom_param(&mut self, name: &str) {
-        self.frame.new_param(name.to_string(), CircomValueType::FR);
+    pub fn new_circom_param(&mut self, name: &str, size: usize) {
+        if size == 1 {
+            self.frame.new_param(name.to_string(), CircomValueType::FR);
+        } else {
+            let par_type = CircomValueType::Array(Box::new(CircomValueType::FR), size);
+            self.frame.new_param(name.to_string(), par_type);
+        }
     }
 
     /// Returns count of function parameters
     pub fn params_count(&self) -> usize {
         return self.frame.params_count();
+    }
+
+    /// Returns total size of function parameters
+    pub fn params_size(&self) -> usize {
+        return self.frame.params_size();
     }
 
 

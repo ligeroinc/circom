@@ -95,6 +95,8 @@ impl WriteWasm for FunctionCodeInfo {
 
 impl GenerateLigetron for FunctionCodeInfo {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
+        println!("GENERATE LIGETRON FOR: {}", self.name);
+        
         let ret_val_size: usize =
         if self.returns.len() == 0 {
             1
@@ -104,15 +106,30 @@ impl GenerateLigetron for FunctionCodeInfo {
             panic!("NYI");
         };
 
+        let mut params_count = 0;
+        for par in &self.params {
+            if par.length.len() == 1 {
+                params_count += par.length[0];
+            } else {
+                panic!("multiple parameter length is not supported");
+            }
+        }
+
         // building local variables info
-        let local_vars = build_variables_info(&self.body, &self.variables, self.params.len());
+        let local_vars = build_variables_info(&self.body, &self.variables, params_count);
 
         // starting new function
         producer.new_function(&self.header, local_vars, ret_val_size);
 
         // adding function parameters
         for par in &self.params {
-            producer.func().new_circom_param(&par.name);
+            let sz = if par.length.len() == 1 {
+                par.length[0]
+            } else {
+                panic!("parameters with multiple lengths are not supported");
+            };
+
+            producer.func().new_circom_param(&par.name, sz);
         }
 
         // generating function body

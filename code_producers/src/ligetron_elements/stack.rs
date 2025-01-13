@@ -560,6 +560,33 @@ impl CircomStackFrame {
         return self.params.len();
     }
 
+    /// Returns total size of parameters
+    pub fn params_size(&self) -> usize {
+        let mut res = 0;
+        for par in &self.params {
+            let par_size = match &par.type_ {
+                CircomValueType::FR => 1,
+                CircomValueType::Array(tp, size) => {
+                    match tp.as_ref() {
+                        CircomValueType::FR => {
+                            *size
+                        }
+                        _ => {
+                            panic!("Non Fr parameters are not supported");
+                        }
+                    }
+                }
+                _ => {
+                    panic!("Non Fr parameters are not supported");
+                }
+            };
+
+            res += par_size;
+        }
+
+        return res;
+    }
+
     /// Returns reference to parameter with specified index
     pub fn param(&self, idx: usize) -> CircomParameterRef {
         assert!(idx < self.params.len());

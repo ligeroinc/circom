@@ -160,7 +160,7 @@ impl LigetronProducer {
             // If we are generating function then we have to take into account parameters count.
             // This is not requried for tempaltes because Circom compiler thinks there is no
             // parameters in template run function.
-            let params_count = self.func().params_count();
+            let params_count = self.func().params_size();
             if circom_idx < params_count {
                 // all function parameters are bigint values
                 return false;
@@ -203,6 +203,56 @@ impl LigetronProducer {
         }
     }
 
+    /// Loads reference to parameter on stack using offset located on top of stack
+    fn load_par_ref(&mut self, size: usize) {
+        let circom_par_offset = self.func().top_index_offset(0) as usize;
+        let mut curr_idx: usize = 0;
+        let mut real_par_idx: usize = 0;
+
+        loop {
+            let par = self.func().param(real_par_idx).clone();
+            let par_size = match self.func().param_type(&par) {
+                CircomValueType::FR => 1,
+                CircomValueType::Array(tp, size) => {
+                    match tp.as_ref() {
+                        CircomValueType::FR => size,
+                        _ => {
+                            panic!("Circom parameter can't be an array of WASM types")
+                        }
+                    }
+                }
+                CircomValueType::WASM(..) => 1,
+                CircomValueType::Struct(..) => {
+                    panic!("Circom parameter can't be a struct");
+                }
+            };
+
+            if curr_idx + par_size > circom_par_offset {
+                // Substracting offset located on top of stack.
+                // This should be done in compile time inside stack logic.
+                self.func().load_i32_const((curr_idx as i32) * -1);
+                self.func().index_add();
+
+                if size == 1 {
+                    if par_size == 1 {
+                        self.func().drop(1);
+                        self.func().load_ref(Box::new(par.clone()));
+                    } else {
+                        self.func().load_array_element_ref(Box::new(par.clone()));
+                    }
+                } else {
+                    self.func().load_array_slice_ref(Box::new(par.clone()), size);
+                }
+
+                break;
+            }
+
+            real_par_idx += 1;
+            curr_idx += par_size;
+        }
+
+    }
+
     /// Loads reference to local variable or parameter on stack
     /// using offset located on top of stack
     pub fn load_local_var_ref(&mut self, size: usize, for_store: bool) {
@@ -210,32 +260,26 @@ impl LigetronProducer {
             // If we are generating function then we have to take into account parameters count.
             // This is not requried for tempaltes because Circom compiler thinks there is no
             // parameters in template run function.
-            let params_count = self.func().params_count();
+            let params_size = self.func().params_size();
             let offset = self.func().top_index_offset(0);
-            if (offset as usize) < params_count {
+            if (offset as usize) < params_size {
                 // loading parmaeter
 
                 if for_store {
                     panic!("can't load parameter reference for store");
                 }
-                
-                if !self.func().top_index_is_const(0) {
-                    panic!("can't load parameter with non const index");
-                }
 
-                if size != 1 {
-                    panic!("array parameters are not supported");
-                }
+                self.load_par_ref(size);
 
-                let par = self.func().param(offset as usize);
-                self.func().drop(1);
-                self.func().load_ref(Box::new(par));
+                // let par = self.func().param(offset as usize);
+                // self.func().drop(1);
+                // self.func().load_ref(Box::new(par));
 
                 return;
             } else {
                 // Decreasing address by number of parameters. That should be done
                 // in compile time in the stack manipulation logic.
-                self.func().load_i32_const(-1 * (params_count as i32));
+                self.func().load_i32_const(-1 * (params_size as i32));
                 self.func().index_add();
             }
         }
@@ -281,7 +325,7 @@ impl LigetronProducer {
                     self.func().load_array_slice_ref(Box::new(var.clone()), size);
                 }
 
-                // if we are loading reference for store then
+                // if we are loading reference for store then set
                 // computation type according to variable type
                 if for_store {
                     let var_type = self.func().local_var_type(&var);
