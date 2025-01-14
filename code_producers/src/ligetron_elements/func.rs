@@ -731,134 +731,116 @@ impl CircomFunction {
 
     /// Generates Fr pow operation
     pub fn gen_fr_pow(&mut self) {
-        panic!("pow operation is not implemented for fp256 yet");
-        // let pow = self.module_ref().fr().pow.clone();
-        // self.gen_call(&pow);
+        let func = self.module_ref().ligetron().fp256_pow.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr idiv operation
     pub fn gen_fr_idiv(&mut self) {
-        panic!("idiv operation is not implemented for fp256 yet");
-        // let idiv = self.module_ref().fr().idiv.clone();
-        // self.gen_call(&idiv);
+        let func = self.module_ref().ligetron().fp256_idiv.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr mod operation
     pub fn gen_fr_mod(&mut self) {
-        panic!("mod operation is not implemented for fp256 yet");
-        // let frmod = self.module_ref().fr().mod_.clone();
-        // self.gen_call(&frmod);
+        let func = self.module_ref().ligetron().fp256_mod.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr shl operation
     pub fn gen_fr_shl(&mut self) {
-        panic!("shl operation is not implemented for fp256 yet");
-        // let shl = self.module_ref().fr().shl.clone();
-        // self.gen_call(&shl);
+        let func = self.module_ref().ligetron().fp256_shl.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr shr operation
     pub fn gen_fr_shr(&mut self) {
-        panic!("shr operation is not implemented for fp256 yet");
-        // let shr = self.module_ref().fr().shr.clone();
-        // self.gen_call(&shr);
+        let func = self.module_ref().ligetron().fp256_shr.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr leq operation
     pub fn gen_fr_leq(&mut self) {
-        panic!("leq operation is not implemented for fp256 yet");
-        // let leq = self.module_ref().fr().leq.clone();
-        // self.gen_call(&leq);
+        let func = self.module_ref().ligetron().fp256_leq.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr geq operation
     pub fn gen_fr_geq(&mut self) {
-        panic!("geq operation is not implemented for fp256 yet");
-        // let geq = self.module_ref().fr().geq.clone();
-        // self.gen_call(&geq);
+        let func = self.module_ref().ligetron().fp256_geq.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr lt operation
     pub fn gen_fr_lt(&mut self) {
-        panic!("lt operation is not implemented for fp256 yet");
-        // let lt = self.module_ref().fr().lt.clone();
-        // self.gen_call(&lt);
+        let func = self.module_ref().ligetron().fp256_lt.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr gt operation
     pub fn gen_fr_gt(&mut self) {
-        panic!("Not implemented for fp256");
-        // let gt = self.module_ref().fr().gt.clone();
-        // self.gen_call(&gt);
+        let func = self.module_ref().ligetron().fp256_gt.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr eq operation
     pub fn gen_fr_eq(&mut self) {
-        let fp256_assert_equal = self.module_ref().ligetron().fp256_assert_equal.clone();
-        self.gen_call(&fp256_assert_equal);
+        let func = self.module_ref().ligetron().fp256_eq.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr neq operation
     pub fn gen_fr_neq(&mut self) {
-        panic!("Not implemented for fp256");
-        // let neq = self.module_ref().fr().neq.clone();
-        // self.gen_call(&neq);
+        let func = self.module_ref().ligetron().fp256_neq.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr lor operation
     pub fn gen_fr_lor(&mut self) {
-        panic!("Not implemented for fp256");
-        // let lor = self.module_ref().fr().lor.clone();
-        // self.gen_call(&lor);
+        let func = self.module_ref().ligetron().fp256_lor.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr land operation
     pub fn gen_fr_land(&mut self) {
-        panic!("Not implemented for fp256");
-        // let land = self.module_ref().fr().land.clone();
-        // self.gen_call(&land);
+        let func = self.module_ref().ligetron().fp256_land.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr bor operation
     pub fn gen_fr_bor(&mut self) {
-        panic!("Not implemented for fp256");
-        // let bor = self.module_ref().fr().bor.clone();
-        // self.gen_call(&bor);
+        let func = self.module_ref().ligetron().fp256_bor.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr band operation
     pub fn gen_fr_band(&mut self) {
-        panic!("Not implemented for fp256");
-        // let band = self.module_ref().fr().band.clone();
-        // self.gen_call(&band);
+        let func = self.module_ref().ligetron().fp256_band.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr bxor operation
     pub fn gen_fr_bxor(&mut self) {
-        panic!("Not implemented for fp256");
-        // let bxor = self.module_ref().fr().bxor.clone();
-        // self.gen_call(&bxor);
+        let func = self.module_ref().ligetron().fp256_bxor.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr neg operation
     pub fn gen_fr_neg(&mut self) {
-        panic!("Not implemented for fp256");
-        // let neg = self.module_ref().fr().neg.clone();
-        // self.gen_call(&neg);
+        let func = self.module_ref().ligetron().fp256_neg.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr lnot operation
     pub fn gen_fr_lnot(&mut self) {
-        panic!("Not implemented for fp256");
-        // let lnot = self.module_ref().fr().lnot.clone();
-        // self.gen_call(&lnot);
+        let func = self.module_ref().ligetron().fp256_lnot.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates Fr bnot operation
     pub fn gen_fr_bnot(&mut self) {
-        panic!("Not implemented for fp256");
-        // let bnot = self.module_ref().fr().bnot.clone();
-        // self.gen_call(&bnot);
+        let func = self.module_ref().ligetron().fp256_bnot.to_wasm();
+        self.gen_fr_bin_op(func);
     }
 
     /// Generates store of int value located on top of stack to location specified

@@ -23,6 +23,30 @@ pub struct LigetronContext {
     pub fp256_divmod: CircomFunctionRef,
     pub fp256_reduce: CircomFunctionRef,
     pub fp256_assert_equal: CircomFunctionRef,
+
+    pub fp256_pow: CircomFunctionRef,
+    pub fp256_idiv: CircomFunctionRef,
+    pub fp256_mod: CircomFunctionRef,
+    pub fp256_neg: CircomFunctionRef,
+
+    pub fp256_shl: CircomFunctionRef,
+    pub fp256_shr: CircomFunctionRef,
+
+    pub fp256_bor: CircomFunctionRef,
+    pub fp256_band: CircomFunctionRef,
+    pub fp256_bxor: CircomFunctionRef,
+    pub fp256_bnot: CircomFunctionRef,
+
+    pub fp256_leq: CircomFunctionRef,
+    pub fp256_geq: CircomFunctionRef,
+    pub fp256_lt: CircomFunctionRef,
+    pub fp256_gt: CircomFunctionRef,
+    pub fp256_eq: CircomFunctionRef,
+    pub fp256_neq: CircomFunctionRef,
+
+    pub fp256_lor: CircomFunctionRef,
+    pub fp256_land: CircomFunctionRef,
+    pub fp256_lnot: CircomFunctionRef,
 }
 
 impl LigetronContext {
@@ -96,6 +120,29 @@ impl LigetronContext {
                                                               vec![]);
         let fp256_assert_equal = Self::import_function(module, "fp256_assert_equal", fp256_assert_equal_type);
 
+        let fp256_pow = Self::import_function(module, "fp256_powpod", fp256_op_type.clone());
+        let fp256_idiv = Self::import_function(module, "fp256_idivmod", fp256_op_type.clone());
+        let fp256_mod = Self::import_function(module, "fp256_mod", fp256_op_type.clone());
+        let fp256_neg = Self::import_function(module, "fp256_negmod", fp256_op_type.clone());
+
+        let fp256_shl = Self::import_function(module, "fp256_shlmod", fp256_op_type.clone());
+        let fp256_shr = Self::import_function(module, "fp256_shrmod", fp256_op_type.clone());
+
+        let fp256_bor = Self::import_function(module, "fp256_bormod", fp256_op_type.clone());
+        let fp256_band = Self::import_function(module, "fp256_bandmod", fp256_op_type.clone());
+        let fp256_bxor = Self::import_function(module, "fp256_bxormod", fp256_op_type.clone());
+        let fp256_bnot = Self::import_function(module, "fp256_bnotmod", fp256_op_type.clone());
+
+        let fp256_leq = Self::import_function(module, "fp256_leq", fp256_op_type.clone());
+        let fp256_geq = Self::import_function(module, "fp256_geq", fp256_op_type.clone());
+        let fp256_lt = Self::import_function(module, "fp256_lt", fp256_op_type.clone());
+        let fp256_gt = Self::import_function(module, "fp256_gt", fp256_op_type.clone());
+        let fp256_eq = Self::import_function(module, "fp256_eq", fp256_op_type.clone());
+        let fp256_neq = Self::import_function(module, "fp256_neq", fp256_op_type.clone());
+
+        let fp256_lor = Self::import_function(module, "fp256_lor", fp256_op_type.clone());
+        let fp256_land = Self::import_function(module, "fp256_land", fp256_op_type.clone());
+        let fp256_lnot = Self::import_function(module, "fp256_lnot", fp256_op_type.clone());
 
         return LigetronContext {
             print: ligetron_print,
@@ -115,7 +162,31 @@ impl LigetronContext {
             fp256_mulmod: fp256_mulmod,
             fp256_divmod: fp256_divmod,
             fp256_reduce: fp256_reduce,
-            fp256_assert_equal: fp256_assert_equal
+            fp256_assert_equal: fp256_assert_equal,
+
+            fp256_pow: fp256_pow,
+            fp256_idiv: fp256_idiv,
+            fp256_mod: fp256_mod,
+            fp256_neg: fp256_neg,
+
+            fp256_shl: fp256_shl,
+            fp256_shr: fp256_shr,
+
+            fp256_bor: fp256_bor,
+            fp256_band: fp256_band,
+            fp256_bxor: fp256_bxor,
+            fp256_bnot: fp256_bnot,
+
+            fp256_leq: fp256_leq,
+            fp256_geq: fp256_geq,
+            fp256_lt: fp256_lt,
+            fp256_gt: fp256_gt,
+            fp256_eq: fp256_eq,
+            fp256_neq: fp256_neq,
+
+            fp256_lor: fp256_lor,
+            fp256_land: fp256_land,
+            fp256_lnot: fp256_lnot
         };
     }
 
