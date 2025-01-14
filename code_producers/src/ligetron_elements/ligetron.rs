@@ -13,6 +13,7 @@ pub struct LigetronContext {
     pub fp256_init: CircomFunctionRef,
     pub fp256_clear: CircomFunctionRef,
     pub fp256_set_ui: CircomFunctionRef,
+    pub fp256_get_ui: CircomFunctionRef,
     pub fp256_from_hex: CircomFunctionRef,
     pub fp256_set_str: CircomFunctionRef,
     pub fp256_set_fp256: CircomFunctionRef,
@@ -87,6 +88,10 @@ impl LigetronContext {
                                                         vec![CircomValueType::FR]);
         let fp256_set_ui = Self::import_function(module, "fp256_set_ui", fp256_set_ui_type);
 
+        let fp256_get_ui_type = CircomFunctionType::new(vec![CircomValueType::FR],
+                                                        vec![CircomValueType::WASM(WASMType::I64)]);
+        let fp256_get_ui = Self::import_function(module, "fp256_get_ui", fp256_get_ui_type);
+
         let fp256_from_hex_params = vec![CircomValueType::WASM(WASMType::PTR),
                                          CircomValueType::WASM(WASMType::I32)];
         let fp256_from_hex_type = CircomFunctionType::new(fp256_from_hex_params,
@@ -158,6 +163,7 @@ impl LigetronContext {
             fp256_init: fp256_init,
             fp256_clear: fp256_clear,
             fp256_set_ui: fp256_set_ui,
+            fp256_get_ui: fp256_get_ui,
             fp256_from_hex: fp256_from_hex,
             fp256_set_str: fp256_set_str,
             fp256_set_fp256: fp256_set_fp256,

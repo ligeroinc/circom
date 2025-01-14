@@ -244,6 +244,13 @@ impl InstructionGenerator {
         self.gen_inst(&format!("i64.extend_i32_s"));
     }
 
+    /// Generates i32.wrap_i64 instruction
+    pub fn gen_i32_wrap_i64(&mut self) {
+        self.stack().pop(&WASMType::I64);
+        self.stack().push(WASMType::I32);
+        self.gen_inst(&format!("i32.wrap_i64"));
+    }
+
     /// Generates shl instruction
     pub fn gen_shl(&mut self, type_: WASMType) {
         if type_ == WASMType::PTR {

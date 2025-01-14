@@ -297,6 +297,11 @@ impl WASMFunction {
         self.inst_gen.borrow_mut().gen_i64_extend_i32_s();
     }
 
+    /// Generates i32.wrap_i64 instruction
+    pub fn gen_i32_wrap_i64(&mut self) {
+        self.inst_gen.borrow_mut().gen_i32_wrap_i64();
+    }
+
     /// Generates shl instruction
     pub fn gen_shl(&mut self, tp: WASMType) {
         self.inst_gen.borrow_mut().gen_shl(tp);

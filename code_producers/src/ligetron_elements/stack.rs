@@ -905,9 +905,7 @@ impl CircomStackFrame {
                     CircomValueType::WASM(wt) => wt,
                     CircomValueType::FR => WASMType::PTR,
                     CircomValueType::Array(..) => WASMType::PTR,
-                    CircomValueType::Struct(..) => {
-                        panic!("Op parameter can't be a struct");
-                    }
+                    CircomValueType::Struct(..) => WASMType::PTR
                 };
 
                 // calculating actual value that is depended from WASM stack value
@@ -939,11 +937,16 @@ impl CircomStackFrame {
                     match self.value_type(&val) {
                         CircomValueType::FR => false,
                         CircomValueType::WASM(..) => true,
-                        CircomValueType::Array(..) => {
-                            panic!("arrays should not reach here");
+                        CircomValueType::Array(tp, _size) => {
+                            match tp.as_ref() {
+                                CircomValueType::FR => false,
+                                _ => {
+                                    panic!("don't know how to convert non Fr array to Fr type");
+                                }
+                            }
                         }
                         CircomValueType::Struct(..) => {
-                            panic!("Op parameter can't be a struct");
+                            panic!("don't know how to convert struct for Fr type");
                         }
                     }
                 }
@@ -951,9 +954,7 @@ impl CircomStackFrame {
                 CircomValueType::Array(..) => {
                     panic!("arrays should not reach here");
                 }
-                CircomValueType::Struct(..) => {
-                    panic!("Op parameter can't be a struct");
-                }
+                CircomValueType::Struct(..) => false,
             };
 
             requires_conversion_to_fr.push(is_conv);
@@ -1025,7 +1026,16 @@ impl CircomStackFrame {
                         CircomValueType::WASM(wasm_comp_tp) => {
                             match self.value_type(&val) {
                                 CircomValueType::FR => {
-                                    panic!("Conversion from Fr to wasm is not supported yet");
+                                    // loading Fr address from WASM local
+                                    self.func.borrow_mut().gen_local_get(&wasm_local);
+
+                                    // converting Fr value to i64
+                                    let fp256_get_ui =
+                                        self.module.borrow().ligetron().fp256_get_ui.to_wasm();
+                                    self.func.borrow_mut().gen_call(&fp256_get_ui);
+
+                                    // converting i64 value to i32
+                                    self.func.borrow_mut().gen_i32_wrap_i64();
                                 }
                                 CircomValueType::Array(..) => {
                                     panic!("arrays should not reach here");
@@ -1039,12 +1049,20 @@ impl CircomStackFrame {
                                     self.func.borrow_mut().gen_local_get(&wasm_local);
                                 }
                                 CircomValueType::Struct(..) => {
-                                    panic!("Op parameter can't be a struct");
+                                    panic!("don't know how to convert struct to WASM type");
                                 }
                             }
                         }
                         CircomValueType::Struct(..) => {
-                            panic!("Op parameter can't be a struct");
+                            match &self.value_type(&val) {
+                                CircomValueType::Struct(..) => {
+                                    // loading struct address from WASM local
+                                    self.func.borrow_mut().gen_local_get(&wasm_local);
+                                }
+                                _ => {
+                                    panic!("don't know how to convert value to struct")
+                                }
+                            }
                         }
                     }
                 }
@@ -1058,8 +1076,16 @@ impl CircomStackFrame {
                         }
                         CircomValueType::FR => {
                             match val_type {
-                                CircomValueType::Array(..) => {
-                                    panic!("arrays should not reach here");
+                                CircomValueType::Array(tp, _size) => {
+                                    match tp.as_ref() {
+                                        CircomValueType::FR => {
+                                            // loading argument to WASM stack using generic load
+                                            self.value_load_ptr_to_wasm_stack(&val);
+                                        }
+                                        _ => {
+                                            panic!("should not reach here");
+                                        }
+                                    }
                                 }
                                 CircomValueType::FR => {
                                     // loading argument to WASM stack using generic load
@@ -1086,7 +1112,7 @@ impl CircomStackFrame {
                                     self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
                                 }
                                 CircomValueType::Struct(..) => {
-                                    panic!("Op parameter can't be a struct");
+                                    panic!("don't know how to convert struct to Fr type");
                                 }
                             }
                         }
@@ -1096,7 +1122,16 @@ impl CircomStackFrame {
                                     panic!("arrays should not reach here");
                                 }
                                 CircomValueType::FR => {
-                                    panic!("Conversion from Fr to wasm is not supported yet");
+                                    // loading Fr pointer to WASM stack
+                                    self.value_load_ptr_to_wasm_stack(&val);
+
+                                    // converting Fr value to i64
+                                    let fp256_get_ui =
+                                        self.module.borrow().ligetron().fp256_get_ui.to_wasm();
+                                    self.func.borrow_mut().gen_call(&fp256_get_ui);
+
+                                    // converting i64 value to i32
+                                    self.func.borrow_mut().gen_i32_wrap_i64();
                                 }
                                 CircomValueType::WASM(val_wasm_tp) => {
                                     if arg_wasm_type != val_wasm_tp {
@@ -1111,12 +1146,20 @@ impl CircomStackFrame {
                                     }
                                 }
                                 CircomValueType::Struct(..) => {
-                                    panic!("Op parameter can't be a struct");
+                                    panic!("don't know how to convert struct to WASM type");
                                 }
                             }
                         }
                         CircomValueType::Struct(..) => {
-                            panic!("Op parameter can't be a struct");
+                            match &self.value_type(&val) {
+                                CircomValueType::Struct(..) => {
+                                    // loading struct address to WASM stack
+                                    self.value_load_ptr_to_wasm_stack(&val);
+                                }
+                                _ => {
+                                    panic!("don't know how to convert value to struct")
+                                }
+                            }
                         }
                     }
                 }
@@ -1251,18 +1294,20 @@ impl CircomStackFrame {
 
     /// Generates call to function passing values located on top of stack as parameters
     pub fn gen_call(&mut self, func_ref: &CircomFunctionRef) {
-        // first calculating number of stack values used in this call
-        let mut num_stack_vals: usize = func_ref.tp().params().len();
+
+        // calculating argument types for function call
+        
+        let mut arg_types = Vec::<CircomValueType>::new();
         for ret_type in func_ref.tp().ret_types().iter().rev() {
             match ret_type {
                 CircomValueType::WASM(_) => {
-                    // WASM return values don't require stack parameter
+                    // WASM return values don't require parameter
                 },
                 CircomValueType::FR => {
-                    num_stack_vals += 1;
+                    arg_types.push(ret_type.clone());
                 },
                 CircomValueType::Array(..) => {
-                    num_stack_vals += 1;
+                    arg_types.push(ret_type.clone());
                 }
                 CircomValueType::Struct(..) => {
                     panic!("Call return value can't be a struct");
@@ -1270,13 +1315,12 @@ impl CircomStackFrame {
             }
         }
 
-        self.load_values_to_wasm_stack(num_stack_vals, CircomValueType::FR);
- 
-        // Generating call instruction
-        self.func.borrow_mut().gen_call(&func_ref.to_wasm());
+        arg_types.append(&mut func_ref.tp().params().clone());
 
-        // removing parameter values from stack
-        self.pop(num_stack_vals);
+        // generating call using gen_op function
+        self.gen_op(arg_types, false, |mut func| {
+            func.gen_call(&func_ref.to_wasm());
+        });
 
         // adding WASM return values to stack
         for ret_type in func_ref.tp().ret_types() {

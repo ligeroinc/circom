@@ -92,7 +92,7 @@ impl CircomFunction {
                 if loc_info.size == 1 {
                     CircomValueType::WASM(WASMType::I32)
                 } else {
-                    panic!("32bit arrays are not supported");
+                    panic!("32bit arrays are not  supported");
                 }
             } else {
                 if loc_info.size == 1 {
@@ -328,8 +328,16 @@ impl CircomFunction {
     ////////////////////////////////////////////////////////////
     /// Addresses and indexes
 
-    /// Converts current stack top value to address. The top of stack must be a WASM PTR value
+    /// Converts current stack top value to index taking into account fp256 conversion
     pub fn convert_index(&mut self) {
+        // using gen_op function to convert possible fp256 value to I32
+        let types = vec![CircomValueType::WASM(WASMType::I32)];
+        self.frame.gen_op(types, false, |_| {});
+
+        // adding I32 value to stack
+        self.frame.push_wasm_stack(WASMType::I32);
+
+        // converting index
         self.frame.convert_index();
     }
 
@@ -550,6 +558,16 @@ impl CircomFunction {
 
         // adding result WASM value to logical stack
         self.frame.push_wasm_stack(WASMType::I32);
+    }
+
+    /// Generates if branch depending on value located on top of stack
+    pub fn gen_if(&mut self) {
+        let types = vec![CircomValueType::WASM(WASMType::I32)];
+        self.frame.gen_op(types, false, |mut func| {
+            func.gen_if();
+        });
+
+        self.frame.start_branch();
     }
 
 

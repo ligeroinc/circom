@@ -324,7 +324,20 @@ impl LocalVariablesAnalyzer {
 
     /// Processes call instruction. Returns true if variable info was changed.
     fn process_call(&mut self, inst: &CallBucket) -> bool {
-        return self.process_inst_list(&inst.arguments, false);
+        let mut changed = false;
+
+        // processing final destination address
+        match &inst.return_info {
+            ReturnType::Final(data) => {
+                changed |= self.process_location(&data.dest, &data.dest_address_type);
+            }
+            _ => {}
+        }
+
+        // processing arguments
+        changed |= self.process_inst_list(&inst.arguments, false);
+
+        return changed;
     }
 
     /// Processes branch instruction. Returns true if variable info was changed.

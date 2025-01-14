@@ -794,19 +794,27 @@ impl LigetronProducer {
         if self.is_computation_type_fr() {
             panic!("conversion to address should be done in 32bit mode");
         } else {
-            // converting WASM I32 value to address
+            // converting top stack value to index
             self.func().convert_index();
         }
     }
 
     /// Generates address add operation
     pub fn addr_add(&mut self) {
-        self.func().index_add();
+        if self.is_computation_type_fr() {
+            panic!("index add should be done in 32bit mode");
+        } else {
+            self.func().index_add();
+        }
     }
 
     /// Generates address mul opearation
     pub fn addr_mul(&mut self) {
-        self.func().index_mul();
+        if self.is_computation_type_fr() {
+            panic!("index mul should be done in 32bit mode");
+        } else {
+            self.func().index_mul();
+        }
     }
 
 
@@ -816,12 +824,9 @@ impl LigetronProducer {
     /// Starts generating if-else block using current stack value as condition
     pub fn gen_if(&mut self) {
         if self.is_computation_type_fr() {
-            panic!("Not implemented for fp256");
-            // self.func().gen_call(&self.module_ref().fr().is_true);
-            // self.func().gen_wasm_if();
+            panic!("if condition should be generated in int mode");
         } else {
-            //self.func().gen_wasm_eqz(WASMType::I32);
-            self.func().gen_wasm_if();
+            self.func().gen_if();
         }
     }
 
