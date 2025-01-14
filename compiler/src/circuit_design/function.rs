@@ -108,7 +108,9 @@ impl GenerateLigetron for FunctionCodeInfo {
 
         let mut params_count = 0;
         for par in &self.params {
-            if par.length.len() == 1 {
+            if par.length.is_empty() {
+                params_count += 1;
+            } else if par.length.len() == 1 {
                 params_count += par.length[0];
             } else {
                 panic!("multiple parameter length is not supported");
@@ -123,7 +125,9 @@ impl GenerateLigetron for FunctionCodeInfo {
 
         // adding function parameters
         for par in &self.params {
-            let sz = if par.length.len() == 1 {
+            let sz = if par.length.is_empty() {
+                1
+            } else if par.length.len() == 1 {
                 par.length[0]
             } else {
                 panic!("parameters with multiple lengths are not supported");
