@@ -849,12 +849,10 @@ impl LigetronProducer {
     /// as loop condition
     pub fn gen_loop_exit(&mut self) {
         if self.is_computation_type_fr() {
-            panic!("Not implemented for fp256");
-            // self.func().gen_call(&self.module_ref().fr().is_true);
-            // self.func().gen_wasm_eqz(&WASMType::I32);
-            // self.func().gen_wasm_loop_exit();
+            panic!("loop exit should always be generated in 32bit mode");
         } else {
-            self.func().gen_wasm_eqz(WASMType::I32);
+            self.func().gen_eqz();
+            self.func().get_frame_mut().pop(1);
             self.func().gen_wasm_loop_exit();
         }
     }

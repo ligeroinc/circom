@@ -23,6 +23,7 @@ pub struct LigetronContext {
     pub fp256_divmod: CircomFunctionRef,
     pub fp256_reduce: CircomFunctionRef,
     pub fp256_assert_equal: CircomFunctionRef,
+    pub fp256_eqz: CircomFunctionRef,
 
     pub fp256_pow: CircomFunctionRef,
     pub fp256_idiv: CircomFunctionRef,
@@ -120,6 +121,10 @@ impl LigetronContext {
                                                               vec![]);
         let fp256_assert_equal = Self::import_function(module, "fp256_assert_equal", fp256_assert_equal_type);
 
+        let fp256_eqz_type = CircomFunctionType::new(vec![CircomValueType::FR],
+                                                     vec![CircomValueType::WASM(WASMType::I32)]);
+        let fp256_eqz = Self::import_function(module, "fp256_eqz", fp256_eqz_type);
+
         let fp256_pow = Self::import_function(module, "fp256_powpod", fp256_op_type.clone());
         let fp256_idiv = Self::import_function(module, "fp256_idivmod", fp256_op_type.clone());
         let fp256_mod = Self::import_function(module, "fp256_mod", fp256_op_type.clone());
@@ -163,6 +168,8 @@ impl LigetronContext {
             fp256_divmod: fp256_divmod,
             fp256_reduce: fp256_reduce,
             fp256_assert_equal: fp256_assert_equal,
+            fp256_eqz: fp256_eqz,
+
 
             fp256_pow: fp256_pow,
             fp256_idiv: fp256_idiv,

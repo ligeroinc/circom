@@ -487,6 +487,8 @@ impl GenerateLigetron for CallBucket {
             }
         }
 
+        producer.debug_dump_state("call bucket before computing arguments");
+
         // generating code for calculating arguments
         for arg in &self.arguments {
             arg.generate_ligetron(producer);

@@ -524,6 +524,36 @@ impl CircomFunction {
 
 
     ////////////////////////////////////////////////////////////
+    // Common operations
+
+    /// Generates comparison with zero depending on value type located on top of stack
+    pub fn gen_eqz(&mut self) {
+        let top_val = self.frame.top(0);
+        let top_val_type = self.frame.value_type(&top_val);
+
+        match top_val_type {
+            CircomValueType::FR => {
+                let types = vec![CircomValueType::FR];
+                let fp256_eqz = self.module_ref().ligetron().fp256_eqz.to_wasm();
+                self.frame.gen_op(types, false, |mut func| {
+                    func.gen_call(&fp256_eqz);
+                });
+            }
+            CircomValueType::WASM(WASMType::I32) => {
+                self.frame.pop(1);
+                self.func.borrow_mut().gen_eqz(&WASMType::I32);
+            }
+            _ => {
+                panic!("don't know how to generate loop exit for type");
+            }
+        }
+
+        // adding result WASM value to logical stack
+        self.frame.push_wasm_stack(WASMType::I32);
+    }
+
+
+    ////////////////////////////////////////////////////////////
     // Integer operations
 
     /// Generates int binary operation
@@ -541,6 +571,9 @@ impl CircomFunction {
         let i32t = CircomValueType::WASM(WASMType::I32);
         let types = vec![i32t.clone(), i32t.clone()];
         self.frame.gen_op(types, false, op);
+
+        // adding result WASM value to logical stack
+        self.frame.push_wasm_stack(WASMType::I32);
     }
 
     /// Generates int mul operation
