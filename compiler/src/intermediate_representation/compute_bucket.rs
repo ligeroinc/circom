@@ -329,6 +329,48 @@ fn is_32bit_const(inst: &InstructionPointer, producer: &LigetronProducer) -> boo
     }
 }
 
+/// Returns true if instruction is 32bit
+fn is_32bit_instruction(inst: &InstructionPointer, producer: &LigetronProducer) -> bool {
+    match inst.as_ref() {
+        Instruction::Load(load_bucket) => {
+            match &load_bucket.src {
+                LocationRule::Indexed { location, .. } => {
+                    match location.as_ref() {
+                        Instruction::Value(value_bucket) => {
+                            producer.is_local_var_32bit(value_bucket.value)
+                        }
+                        _ => false
+                    }
+                }
+                _ => false
+            }
+        }
+        Instruction::Value(value_bucket) => {
+            if value_bucket.parse_as == ValueType::U32 {
+                true
+            } else {
+                return producer.is_global_const_32bit(value_bucket.value)
+            }
+        }
+        Instruction::Compute(compute_bucket) => {
+            if !compute_op_propagates_32bit_up(compute_bucket.op) {
+                false
+            } else {
+                let mut operands_32bit = true;
+                for op in &compute_bucket.stack {
+                    if !is_32bit_instruction(&op, producer) {
+                        operands_32bit = false;
+                        break;
+                    }
+                }
+
+                operands_32bit
+            }
+        },
+        _ => false
+    }
+}
+
 fn is_32bit_var_or_const(inst: &InstructionPointer, producer: &LigetronProducer) -> bool {
     return is_32bit_var(inst, producer) || is_32bit_const(inst, producer);
 }
@@ -355,8 +397,8 @@ impl GenerateLigetron for ComputeBucket {
             };
 
             let is_cmp_op_32bit = if is_cmp_op {
-                is_32bit_var_or_const(&self.stack[0], producer) &&
-                    is_32bit_var_or_const(&self.stack[1], producer)
+                is_32bit_instruction(&self.stack[0], producer) &&
+                    is_32bit_instruction(&self.stack[1], producer)
             } else {
                 false
             };
@@ -545,6 +587,39 @@ pub fn compute_op_propagates_32bit_down(op: OperatorType) -> bool {
         OperatorType::BoolOr => false,
         OperatorType::BoolAnd => false,
         OperatorType::BitOr => true,
+        OperatorType::BitAnd => false,
+        OperatorType::BitXor => false,
+        OperatorType::PrefixSub => false,
+        OperatorType::BoolNot => false,
+        OperatorType::Complement => false,
+        OperatorType::ToAddress => true,
+        OperatorType::MulAddress => true,
+        OperatorType::AddAddress => true
+    };
+}
+
+/// Returns true if compute operator propagates 32bit variable type from
+/// operands to result
+pub fn compute_op_propagates_32bit_up(op: OperatorType) -> bool {
+    return match op {
+        OperatorType::Mul => true,
+        OperatorType::Div => false,
+        OperatorType::Add => true,
+        OperatorType::Sub => true,
+        OperatorType::Pow => false,
+        OperatorType::IntDiv => false,
+        OperatorType::Mod => false,
+        OperatorType::ShiftL => false,
+        OperatorType::ShiftR => false,
+        OperatorType::LesserEq => false,
+        OperatorType::GreaterEq => false,
+        OperatorType::Lesser => false,
+        OperatorType::Greater => false,
+        OperatorType::Eq(_usize) => false,
+        OperatorType::NotEq => false,
+        OperatorType::BoolOr => false,
+        OperatorType::BoolAnd => false,
+        OperatorType::BitOr => false,
         OperatorType::BitAnd => false,
         OperatorType::BitXor => false,
         OperatorType::PrefixSub => false,
