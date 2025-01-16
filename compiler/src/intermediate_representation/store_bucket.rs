@@ -499,7 +499,11 @@ impl GenerateLigetron for StoreBucket {
                 producer.debug_dump_state("after load subcomponent address for run");
 
                 // generating run code
-                producer.gen_subcmp_run(store_size);
+                let is_mapped = match self.dest {
+                    LocationRule::Mapped { .. } => true,
+                    _ => false
+                };
+                producer.gen_subcmp_run(store_size, is_mapped);
 
                 producer.debug_dump_state("after subcomponent run");
             }

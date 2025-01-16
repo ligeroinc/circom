@@ -95,8 +95,6 @@ impl WriteWasm for FunctionCodeInfo {
 
 impl GenerateLigetron for FunctionCodeInfo {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
-        println!("GENERATE LIGETRON FOR: {}", self.name);
-        
         let ret_val_size: usize =
         if self.returns.len() == 0 {
             1
@@ -427,7 +425,17 @@ impl LocalVariablesAnalyzer {
             LocationRule::Indexed { location, .. } => {
                 changed |= self.process_address(location);
             }
-            LocationRule::Mapped { .. } => {
+            LocationRule::Mapped { indexes, .. } => {
+                for idx in indexes {
+                    match idx {
+                        AccessType::Indexed( info ) => {
+                            for index in &info.indexes {
+                                changed |= self.process_address(&index);
+                            }
+                        },
+                        _ => {}
+                    }
+                }
             }
         }
 

@@ -3,6 +3,7 @@ use super::ligetron::*;
 use super::template::*;
 use super::types::*;
 use super::wasm::*;
+use crate::components::*;
 
 use num_bigint_dig::BigInt;
 use std::rc::Rc;
@@ -17,7 +18,8 @@ pub struct LigetronProducerInfo {
     pub templates: HashMap<usize, TemplateInfo>,
     pub string_table: Vec<String>,
     pub field_tracking: Vec<String>,
-    pub debug_output: bool
+    pub debug_output: bool,
+    pub io_map: TemplateInstanceIOMap
 }
 
 
@@ -40,6 +42,9 @@ pub struct CircomModule {
 
     /// List of generated module instructions
     instructions: Vec<String>,
+
+    /// Templates runtime information
+    templates_info: TemplatesRuntimeInfo
 }
 
 impl CircomModule {
@@ -56,6 +61,9 @@ impl CircomModule {
                                           WASMType::PTR,
                                           format!("(i32.const 0)")); 
 
+        // building templates runtime information
+        let templates_info = TemplatesRuntimeInfo::build(0, &info);
+
         // building string table
         let mut string_table = HashMap::<usize, usize>::new();
         let mut string_offset = 0;
@@ -70,7 +78,8 @@ impl CircomModule {
             ligetron_ctx: ligetron,
             stack_ptr_var: stack_ptr,
             string_table: string_table,
-            instructions: vec![]
+            instructions: vec![],
+            templates_info
         };
     }
 
@@ -104,9 +113,30 @@ impl CircomModule {
         return &self.stack_ptr_var;
     }
 
+    /// Returns reference to templates runtime info
+    pub fn templates_runtime_info(&self) -> &TemplatesRuntimeInfo {
+        return &self.templates_info;
+    }
+
+    /// Returns size of templates runtime info
+    pub fn templates_runtime_info_size(&self) -> usize {
+        return self.templates_info.data_size();
+    }
+
+    /// Returns offset of templates runtimr info
+    pub fn templates_runtime_info_offset(&self) -> usize {
+        return 0;
+    }
+
+    /// Returns start offset of string table
+    pub fn string_table_offset(&self) -> usize {
+        return self.templates_runtime_info_size();
+    }
+
     /// Returns address of global string in string table
     pub fn string_address(&self, idx: usize) -> usize {
-        return *self.string_table.get(&idx).expect("can't find string in string table");
+        return self.string_table_offset() +
+               *self.string_table.get(&idx).expect("can't find string in string table");
     }
 
     /// Calculates size of string table
@@ -121,7 +151,8 @@ impl CircomModule {
 
     /// Calculates sart offset of constants block
     fn calc_constants_start(&self) -> usize {
-        return self.calc_string_table_size();
+        return self.templates_runtime_info_size() +
+               self.calc_string_table_size();
     }
 
     /// Calculates size of constants table
@@ -136,14 +167,15 @@ impl CircomModule {
 
     /// Calculates start offset of memory stack
     pub fn calc_mem_stack_start(&self) -> usize {
-        return self.calc_string_table_size() +
+        return self.templates_runtime_info_size() +
+               self.calc_string_table_size() +
                self.calc_constants_table_size();
     }
 
     /// Generates string table
     fn generate_strings(&self) -> Vec<String> {
         let mut strings = Vec::<String>::new();
-        let mut offset = 0;
+        let mut offset = self.string_table_offset();
 
         for str in &self.info.string_table {
             strings.push(format!("(data (i32.const {}) \"{}\\00\")", offset, str));
@@ -184,7 +216,7 @@ impl CircomModule {
 
     /// Generates constatnts data
     fn generate_constants(&self) -> String {
-        let start = self.calc_string_table_size();
+        let start = self.calc_constants_start();
         let data = self.generate_data_constants(&self.info.field_tracking);
         return format!("(data (i32.const {}) \"{}\")", start, data);
     }
@@ -192,6 +224,23 @@ impl CircomModule {
     /// Appends instructions into list of module instructions
     pub fn append_instruction(&mut self, insts: &mut Vec<String>) {
         self.instructions.append(insts);
+    }
+
+    /// Generates table of run functions for templates
+    fn generate_run_functions_table(&self) -> Vec<String> {
+        let mut instructions = Vec::<String>::new();
+
+        instructions.push(format!("(table {} anyfunc)", self.info.templates.len()));
+
+        for templ_idx in 0 .. self.info.templates.len() {
+            let templ = self.info.templates.get(&templ_idx)
+                .expect("can't find template in templates map");
+
+            let func_name = templ.run_func_name();
+            instructions.push(format!("(elem (i32.const {}) ${})", templ_idx, func_name));
+        }
+
+        return instructions;
     }
 
     /// Generates final code for module. Makes this instance invalid
@@ -210,7 +259,24 @@ impl CircomModule {
         instructions.push(format!("(memory 1 1)"));
         instructions.push(format!("(export \"memory\" (memory 0))"));
 
+        // templates run function table
+        instructions.push(format!(""));
+        instructions.push(format!(";; templates run functions table"));
+        instructions.append(&mut self.generate_run_functions_table());
+
+        // template run function type
+        instructions.push(format!(""));
+        instructions.push(format!(";; templates run function type"));
+        instructions.push(format!("(type $template_run_type (func (param i32)))"));
+
+        // templates runtime info
+        instructions.push(format!(""));
+        instructions.push(format!(";; templates runtime information"));
+        instructions.push(self.templates_info.generate());
+
         // String table
+        instructions.push(format!(""));
+        instructions.push(format!(";; string table"));
         instructions.append(&mut self.generate_strings());
 
         // constants table

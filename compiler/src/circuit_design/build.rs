@@ -253,7 +253,7 @@ fn initialize_wasm_producer(vcp: &VCP, database: &TemplateDB, wat_flag:bool, ver
 
 // Ligetron producer builder
 fn initialize_ligetron_producer(vcp: &VCP,
-                                _database: &TemplateDB,
+                                database: &TemplateDB,
                                 flags: &CompilationFlags,
                                 _version: &str) -> LigetronProducerInfo {
     use program_structure::utils::constants::UsefulConstants;
@@ -272,7 +272,7 @@ fn initialize_ligetron_producer(vcp: &VCP,
             signals.push(SignalInfo::new(kind, sig.size()));
         }
 
-        let info = TemplateInfo::new(templ.template_header.clone(), signals);
+        let info = TemplateInfo::new(templ.template_id, templ.template_header.clone(), signals);
         templates.insert(templ.template_id, info);
     }
 
@@ -282,7 +282,8 @@ fn initialize_ligetron_producer(vcp: &VCP,
         main_comp_id: vcp.get_main_instance().unwrap().template_id,
         string_table: vec![],
         field_tracking: vec![],
-        debug_output: flags.debug_output
+        debug_output: flags.debug_output,
+        io_map: build_io_map(vcp, database)
     };
 }
 

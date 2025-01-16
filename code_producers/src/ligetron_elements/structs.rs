@@ -12,7 +12,10 @@ pub struct StructFieldRef {
     str: Box<dyn CircomValueRef>,
 
     /// Field index
-    index: usize
+    index: usize,
+
+    /// Optional field type instead of real field type
+    tp: Option<CircomValueType>
 }
 
 impl StructFieldRef {
@@ -20,9 +23,22 @@ impl StructFieldRef {
     pub fn new(str: Box<dyn CircomValueRef>, index: usize) -> StructFieldRef {
         return StructFieldRef {
             str: str,
-            index
+            index: index,
+            tp: None
         };
     }
+
+    /// Creates new casted array element reference
+    pub fn new_casted(str: Box<dyn CircomValueRef>,
+                      index: usize,
+                      tp: CircomValueType) -> StructFieldRef {
+        return StructFieldRef {
+            str: str,
+            index: index,
+            tp: Some(tp)
+        };
+    }
+
 
     /// Returns type of struct of field for this value
     pub fn struct_type(&self, frame: &CircomStackFrame) -> CircomStructType {
@@ -56,6 +72,10 @@ impl CircomValueRef for StructFieldRef {
 
     /// Returns value type
     fn xtype(&self, frame: &CircomStackFrame) -> CircomValueType {
+        if let Some(tp) = &self.tp {
+            return tp.clone();
+        }
+
         return self.struct_type(frame).fields[self.index].clone();
     }
 
@@ -77,4 +97,11 @@ impl CircomValueRef for StructFieldRef {
 /// Returns field of struct value                 
 pub fn field(str: &dyn CircomValueRef, index: usize) -> Box<dyn CircomValueRef> {
     return Box::new(StructFieldRef::new(str.clone_ref(), index));
+}
+
+/// Returns casted field of struct value                 
+pub fn casted_field(str: &dyn CircomValueRef,
+                    index: usize,
+                    tp: CircomValueType) -> Box<dyn CircomValueRef> {
+    return Box::new(StructFieldRef::new_casted(str.clone_ref(), index, tp));
 }

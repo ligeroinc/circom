@@ -75,6 +75,8 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
 
             // loading subcomponent address
             producer.load_subcmp_address();
+
+            producer.debug_dump_state("after subcomponent address load");
         }
         _ => {}
     }
@@ -98,8 +100,38 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                 }
             }
         }
-        LocationRule::Mapped { .. } => {
-            panic!("NYI");
+        LocationRule::Mapped { signal_code, indexes } => {
+            // generating code for calculating mapped indexes
+            let indexes_count = if !indexes.is_empty() {
+                if indexes.len() != 1 {
+                    panic!("multiple indexes are not supported");
+                }
+
+                let idx_access = &indexes[0];
+                match idx_access {
+                    AccessType::Indexed(info) => {
+                        let old_comp_type = producer.set_addr_computation_type();
+                        for idx_inst in &info.indexes {
+                            idx_inst.generate_ligetron(producer);
+                        }
+
+                        producer.set_computation_type(old_comp_type);
+
+                        info.indexes.len()
+                    }
+                    AccessType::Qualified(..) => {
+                        panic!("Qualified access type is not supported");
+                    }
+                }
+            } else {
+                0
+            };
+
+            producer.debug_dump_state("after mapped indexes calculation");
+
+            producer.load_subcmp_mapped_signal_ref(*signal_code, indexes_count);
+
+            producer.debug_dump_state("after load mapped signal");
         }
     }
 }

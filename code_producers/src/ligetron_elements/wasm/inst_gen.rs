@@ -114,6 +114,25 @@ impl InstructionGenerator {
         self.gen_inst(&format!("call {}", func.generate()));
     }
 
+    /// Generates call indirect instruction
+    pub fn gen_call_indirect(&mut self, tp: &WASMFunctionType, type_name: String) {
+        // popping function index from wasm stack
+        self.stack().pop(&WASMType::I32);
+
+        // popping parameters from the wasm stack
+        for par in tp.params().iter().rev() {
+            self.stack().pop(par);
+        }
+
+        // pushing return values to the wasm stack
+        for ret in tp.ret_types() {
+            self.stack().push(*ret);
+        }
+
+        // generating call instruction
+        self.gen_inst(&format!("(call_indirect (type ${}))", type_name));
+    }
+
     /// Generates getting value of a local
     pub fn gen_local_get(&mut self, var_ref: &WASMLocalVariableRef) {
         {

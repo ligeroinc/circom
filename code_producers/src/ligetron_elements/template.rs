@@ -1,17 +1,25 @@
 
 use super::arrays::*;
+use super::constants::ConstValue;
+use super::constants::GlobalValue;
+use super::data::DataWriter;
 use super::func::*;
 use super::stack::*;
 use super::structs::*;
 use super::types::*;
-use super::value::CircomValueRef;
+use super::value::*;
 use super::wasm::*;
-use super::wasm_stack::WASMStackAddress;
+use super::wasm_local::*;
+use super::wasm_stack::*;
 use super::CircomModule;
+use super::LigetronProducerInfo;
+
+use crate::components::*;
 
 use std::path::Component;
 use std::rc::Rc;
 use std::cell::{RefCell, RefMut};
+use std::collections::HashMap;
 
 
 /// Signal kind
@@ -43,9 +51,110 @@ impl SignalInfo {
 }
 
 
+/// Templates runtime information for mapped signal access
+pub struct TemplatesRuntimeInfo {
+    /// Templates runtime information data
+    data: DataWriter,
+
+    /// Start offset of templates information in generated module
+    info_offset: usize,
+
+    /// Start offset of templates data
+    data_offset: usize,
+}
+
+impl TemplatesRuntimeInfo {
+    /// Builds new template information for module
+    pub fn build(start_offset: usize, info: &LigetronProducerInfo) -> TemplatesRuntimeInfo {
+        let mut data = DataWriter::new();
+
+        // writing all lengths data and building lengths map
+        let mut lengths_map = HashMap::<usize, HashMap<usize, usize>>::new();
+        for (templ_id, templ_io_entry) in &info.io_map {
+            let mut templ_lengths_map = HashMap::<usize, usize>::new();
+            for (idx, signal) in templ_io_entry.iter().enumerate() {
+                templ_lengths_map.insert(idx, data.data_size() + start_offset);
+                for length in &signal.lengths {
+                    data.write_i32(*length as i32);
+                }
+            }
+            
+            lengths_map.insert(*templ_id, templ_lengths_map);
+        }
+
+        // writing all signals data and building signals map
+        let mut signals_map = HashMap::<usize, usize>::new();
+        for (templ_id, templ_io_entry) in &info.io_map {
+            signals_map.insert(*templ_id, data.data_size());
+            let templ_length_map = lengths_map.get(&templ_id).unwrap();
+
+            for (idx, signal) in templ_io_entry.iter().enumerate() {
+                if signal.code != idx {
+                    panic!("signal code is not equal to signal index");
+                }
+
+                data.write_i32(signal.offset as i32);
+                data.write_i32(*templ_length_map.get(&idx).unwrap() as i32);
+            }
+        }
+
+        let info_offset = data.data_size();
+
+        // writing all templates
+        for templ_id in 0 .. info.templates.len() {
+            match signals_map.get(&templ_id) {
+                Some(templ_info_address) => {
+                    data.write_i32(*templ_info_address as i32);
+                }
+                None => {
+                    data.write_i32(0);
+                }
+            }
+        }
+
+        return TemplatesRuntimeInfo {
+            data: data,
+            info_offset: info_offset,
+            data_offset: start_offset
+        };
+    }
+
+    /// Returns size of data
+    pub fn data_size(&self) -> usize {
+        return self.data.data_size();
+    }
+
+    /// Returns value pointing to templates table
+    pub fn templates_table(&self) -> Box<dyn CircomValueRef> {
+        let val_type = CircomValueType::Array(Box::new(CircomValueType::WASM(WASMType::PTR)), 0);
+        return Box::new(GlobalValue::new(val_type, self.info_offset));
+    }
+
+    /// Generates templates runtime info as wasm
+    pub fn generate(&self) -> String {
+        return format!("(data (i32.const {}) \"{}\")", self.data_offset, self.data.hex_data());
+    }
+
+    /// Returns type for signal info
+    pub fn signal_info_type() -> CircomValueType {
+        let fields = vec![CircomValueType::WASM_I32(), CircomValueType::WASM_PTR()];
+        let str = CircomStructType { fields };
+        return CircomValueType::Struct(str);
+    }
+
+    /// Returns type for signal map
+    pub fn signal_map_type() -> CircomValueType {
+        return CircomValueType::Array(Box::new(Self::signal_info_type()), 0);
+    }
+}
+
+
 /// Template information
 #[derive(Clone)]
 pub struct TemplateInfo {
+    /// Template ID
+    id_: usize,
+
     /// Template name
     name_: String,
 
@@ -55,11 +164,17 @@ pub struct TemplateInfo {
 
 impl TemplateInfo {
     /// Creates new template info
-    pub fn new(name: String, signals: Vec<SignalInfo>) -> TemplateInfo {
+    pub fn new(id: usize, name: String, signals: Vec<SignalInfo>) -> TemplateInfo {
         return TemplateInfo {
+            id_: id,
             name_: name,
             signals: signals
         }
+    }
+
+    /// Returns template ID
+    pub fn id(&self) -> usize {
+        return self.id_;
     }
 
     /// Returns template name
@@ -145,9 +260,17 @@ impl CircomComponent {
         return CircomComponent::new(template, data);
     }
 
+    /// Sets reference to data
+    pub fn set_data(&mut self, new_data: Box<dyn CircomValueRef>) {
+        self.data_ = new_data;
+    }
+
     /// Builds and returns struct type for storing component data for template
     pub fn component_data_struct(template: &TemplateInfo) -> CircomStructType {
         let mut fields = Vec::<CircomValueType>::new();
+
+        // template ID
+        fields.push(CircomValueType::WASM(WASMType::I32));
 
         // input signals counter
         fields.push(CircomValueType::WASM(WASMType::I32));
@@ -183,19 +306,35 @@ impl CircomComponent {
         return Self::component_data_struct(&self.template);
     }
 
+    /// Returns data type for component data
+    pub fn data_type(&self) -> CircomValueType {
+        return CircomValueType::Struct(self.data_struct());
+    }
+
     /// Returns reference to component data
     pub fn data(&self) -> &Box<dyn CircomValueRef> {
         return &self.data_;
     }
 
+    /// Returns reference to template ID
+    pub fn template_id(&self) -> Box<dyn CircomValueRef> {
+        return field(self.data_.as_ref(), 0);
+    }
+
     /// Returns reference to input signal counter
     pub fn input_signal_counter(&self) -> Box<dyn CircomValueRef> {
-        return field(self.data_.as_ref(), 0);
+        return field(self.data_.as_ref(), 1);
     }
 
     /// Returns reference to input or output signal with specified index
     pub fn io_signal(&self, index: usize) -> Box<dyn CircomValueRef> {
-        return field(self.data_.as_ref(), index + 1);
+        return field(self.data_.as_ref(), index + 2);
+    }
+
+    /// Returns reference to io signals as flatten array
+    pub fn io_signals_flatten_array(&self) -> Box<dyn CircomValueRef> {
+        let arr_type = CircomValueType::Array(Box::new(CircomValueType::FR), 0);
+        return casted_field(self.data_.as_ref(), 2, arr_type);
     }
 
     /// Returns name of component run function
@@ -512,12 +651,19 @@ impl Template {
     /// Creates new subcomponent
     pub fn create_subcmp(&mut self, subcmp_id: usize, template: TemplateInfo) {
         // allocating subcomponent in local variable
-        let subcmp = CircomComponent::allocate(template, |tp| {
+        let subcmp = CircomComponent::allocate(template.clone(), |tp| {
             return Box::new(self.func().new_local_var(format!("subcmp_{}", subcmp_id), tp));
         });
 
-        // initializing subcomponent input signals counter
         let inst_gen_rc = self.func().wasm_func_rc().borrow().inst_gen_rc().clone();
+
+        // initializing template ID
+        subcmp.template_id().gen_load_ptr_to_wasm_stack(&mut inst_gen_rc.borrow_mut(),
+                                                        &self.func().get_frame_mut());
+        self.func().gen_wasm_const(WASMType::I32, template.id() as i64);
+        self.func().gen_wasm_store(WASMType::I32);
+
+        // initializing subcomponent input signals counter
         let counter = subcmp.input_signal_counter();
         counter.gen_load_ptr_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
         self.func().gen_wasm_const(WASMType::I32, subcmp.input_signals_count() as i64);
@@ -685,9 +831,127 @@ impl Template {
         }
     }
 
+    /// Loads reference to subcomponent mapped signal
+    pub fn load_subcmp_mapped_signal_ref(&mut self, signal_code: usize, indexes_count: usize) {
+        // saving all indexes to temporary vector and removing them from logical stack
+        let mut indexes = Vec::<Box<dyn CircomValueRef>>::new();
+        for idx_idx in 0 .. indexes_count {
+            let stack_idx = indexes_count - idx_idx - 1;
+            let idx = self.func().get_frame().top(stack_idx);
+            indexes.push(self.func().get_frame().value_kind(&idx));
+        }
+        self.func().get_frame_mut().pop(indexes_count);
+
+        // getting component from top stack and removing it from logical stack
+        let mut comp = match self.func().get_frame().top_component(0) {
+            Some(comp) => comp,
+            None => {
+                panic!("top stack value is not a component");
+            }
+        };
+        self.func().get_frame_mut().pop(1);
+
+        let inst_gen = self.func().wasm_func_rc().borrow().inst_gen_rc().clone();
+
+        // saving indexes to WASM locals
+        for stack_idx in 0 .. indexes_count {
+            let idx_idx = indexes_count - stack_idx - 1;
+            if indexes[idx_idx].is_wasm_stack() {
+                let local = self.func().new_wasm_local(WASMType::I32);
+                self.func().gen_wasm_local_set(&local);
+                indexes[idx_idx] = Box::new(WASMLocalVariableValueRef::new(local));
+            }
+        }
+
+        if comp.is_wasm_stack() {
+            // saving comonent address to WASM local because we need to use it twice
+            let comp_local = self.func().new_wasm_local(WASMType::PTR);
+            self.func().gen_wasm_local_set(&comp_local);
+            let comp_type = CircomValueType::Struct(comp.data_struct());
+            comp.set_data(Box::new(WASMLocalVariableValuePtrRef::new(comp_local, comp_type)));
+        }
+
+        // loading template ID from component data
+        comp.template_id().gen_load_to_wasm_stack(&mut inst_gen.borrow_mut(),
+                                                  self.func().get_frame());
+
+        // loading template signal map from templates runtime info
+        let templates_table = self.func().module_ref().templates_runtime_info().templates_table();
+        gen_load_array_element_ptr_to_wasm_stack_dyn(self.func().get_frame(),
+                                                     templates_table.as_ref(),
+                                                     0,
+                                                     &mut inst_gen.borrow_mut());
+        self.func().gen_wasm_load(WASMType::PTR);
+
+        if indexes_count == 0 {
+            // constructing value pointing to signal info struct
+            let signal_map = WASMStackAddress::new(TemplatesRuntimeInfo::signal_map_type());
+            let signal_info = array_element(Box::new(signal_map), signal_code);
+
+            // loading signal offset
+            let signal_offset = field(signal_info.as_ref(), 0);
+            signal_offset.gen_load_to_wasm_stack(&mut inst_gen.borrow_mut(), self.func().get_frame());
+
+            // loading signal from component data
+            gen_load_array_element_ptr_to_wasm_stack_dyn(self.func().get_frame(),
+                                                         comp.io_signals_flatten_array().as_ref(),
+                                                         0,
+                                                         &mut inst_gen.borrow_mut());
+        } else {
+            // saving pointer to signal map into wasm local because we will use it several times
+            let signal_map_loc = self.func().new_wasm_local(WASMType::PTR);
+            inst_gen.borrow_mut().gen_local_set(&signal_map_loc);
+            let signal_map_type = TemplatesRuntimeInfo::signal_map_type();
+            let signal_map = WASMLocalVariableValuePtrRef::new(signal_map_loc, signal_map_type);
+
+            // constructing value pointing to signal info struct
+            let signal_info = array_element(Box::new(signal_map), signal_code);
+
+            // loading pointer to sizes array and saving it into wasm local
+            let sizes_loc = self.func().new_wasm_local(WASMType::PTR);
+            field(signal_info.as_ref(), 1).gen_load_to_wasm_stack(&mut inst_gen.borrow_mut(),
+                                                                  self.func().get_frame());
+            inst_gen.borrow_mut().gen_local_set(&sizes_loc);
+            let sizes_type = CircomValueType::Array(Box::new(CircomValueType::WASM_I32()),
+                                                    indexes_count);
+            let sizes = Box::new(WASMLocalVariableValuePtrRef::new(sizes_loc, sizes_type));
+
+            // loading base signal offset
+            let signal_offset = field(signal_info.as_ref(), 0);
+            signal_offset.gen_load_to_wasm_stack(&mut inst_gen.borrow_mut(),
+                                                 self.func().get_frame());
+            
+
+            // calculating real signal index using sizes table
+            for idx_idx in 0 .. indexes_count {
+                indexes[idx_idx].gen_load_to_wasm_stack(&mut inst_gen.borrow_mut(),
+                                                        self.func().get_frame());
+
+                if idx_idx != 0 {
+                    // multiplying loaded index by size or array (it's located at index idx_idx - 1)
+                    let size = array_element(sizes.clone(), idx_idx - 1);
+                    size.gen_load_to_wasm_stack(&mut inst_gen.borrow_mut(),
+                                                self.func().get_frame());
+                    inst_gen.borrow_mut().gen_mul(WASMType::I32);
+                }
+
+                inst_gen.borrow_mut().gen_add(WASMType::I32);
+            }
+
+            // loading pointer to signal from component data
+            gen_load_array_element_ptr_to_wasm_stack_dyn(self.func().get_frame(),
+                                                         comp.io_signals_flatten_array().as_ref(),
+                                                         0,
+                                                         &mut inst_gen.borrow_mut());
+        }
+
+        // adding value on top of stack
+        self.func().get_frame_mut().load_ref(Box::new(WASMStackAddress::new(CircomValueType::FR)));
+    }
+
     /// Generates code for running subcomponent after store to signal
-    pub fn gen_subcmp_run(&mut self, sig_size: usize) {
-        let comp = match self.func().get_frame().top_component(0) {
+    pub fn gen_subcmp_run(&mut self, sig_size: usize, is_mapped: bool) {
+        let mut comp = match self.func().get_frame().top_component(0) {
             Some(comp) => comp,
             None => {
                 panic!("top stack value is not a component");
@@ -696,48 +960,53 @@ impl Template {
 
         let inst_gen_rc = self.func().wasm_func_rc().borrow().inst_gen_rc().clone();
 
-        let comp_loc: Option<WASMLocalVariableRef> = if comp.is_wasm_stack() {
+        if comp.is_wasm_stack() {
             // saving address of component to temporary local because we need to
             // use it several times
             let loc = self.func().new_wasm_local(WASMType::PTR);
             self.func().gen_wasm_local_set(&loc);
-            self.func().gen_wasm_local_get(&loc);
-            Some(loc)
-        } else {
-            None
-        };
+            comp.set_data(Box::new(WASMLocalVariableValuePtrRef::new(loc.clone(), comp.data_type())));
+        }
 
         // decreasing number of input signals for component
         let counter = comp.input_signal_counter();
         counter.gen_load_ptr_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
-
-        if let Some(loc) = &comp_loc {
-            self.func().gen_wasm_local_get(loc);
-        }
         counter.gen_load_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
         self.func().gen_wasm_const(WASMType::I32, sig_size as i64);
         self.func().gen_wasm_sub(WASMType::I32);
         self.func().gen_wasm_store(WASMType::I32);
 
         // running subcomponent code if all input signals were set
-        if let Some(loc) = &comp_loc {
-            self.func().gen_wasm_local_get(loc);
-        }
         counter.gen_load_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
         self.func().gen_wasm_if();
         self.func().gen_wasm_else();
 
-        if let Some(loc) = &comp_loc {
-            self.func().gen_wasm_local_get(loc);
-        }
-
-        // loading pointer to subcomponent data
-        self.func().load_ref(comp.data().clone_ref());
-
-        self.func().debug_dump_state("BEFORE COMP RUN CALL");
-
         // calling subcomponent run function
-        self.func().gen_call(&comp.run_func());
+        if is_mapped {
+            // indirect call of function with number equal to template ID
+
+            // loading pointer to subcomponent data to WASM stack
+            comp.data().gen_load_ptr_to_wasm_stack(&mut inst_gen_rc.borrow_mut(),
+                                                   &self.func().get_frame_mut());
+
+            // loading template ID to wasm stack
+            comp.template_id().gen_load_to_wasm_stack(&mut inst_gen_rc.borrow_mut(),
+                                                      &self.func().get_frame_mut());
+
+            // generating indirect WASM call
+            self.func().debug_dump_state("BEFORE COMP RUN DYNAMIC CALL");
+            let fname = "template_run_type".to_string();
+            inst_gen_rc.borrow_mut().gen_call_indirect(&comp.run_func_type().to_wasm(), fname);
+        } else {
+            // direct call to template run function
+
+            // loading pointer to subcomponent data
+            self.func().load_ref(comp.data().clone_ref());
+
+            self.func().debug_dump_state("BEFORE COMP RUN DIRECT CALL");
+
+            self.func().gen_call(&comp.run_func());
+        }
 
         self.func().debug_dump_state("AFTER COMP RUN CALL");
 

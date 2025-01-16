@@ -1,6 +1,7 @@
 use lz_fnv::Fnv1a;
 use std::collections::BTreeMap;
 
+#[derive(Clone)]
 pub struct IODef {
     pub code: usize,
     pub offset: usize,

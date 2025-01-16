@@ -58,6 +58,14 @@ impl CircomValueType {
             }
         }
     }
+
+    pub fn WASM_I32() -> CircomValueType { return CircomValueType::WASM(WASMType::I32); }
+    pub fn WASM_I64() -> CircomValueType { return CircomValueType::WASM(WASMType::I64); }
+    pub fn WASM_PTR() -> CircomValueType { return CircomValueType::WASM(WASMType::PTR); }
+
+    pub fn Array_WASM_PTR(size: usize) -> CircomValueType {
+        return CircomValueType::Array(Box::new(Self::WASM_PTR()), size);
+    }
 }
 
 

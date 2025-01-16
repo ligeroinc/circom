@@ -1,6 +1,7 @@
 
 mod arrays;
 mod constants;
+mod data;
 mod entry;
 mod func;
 mod ligetron;
@@ -14,6 +15,7 @@ mod template;
 mod types;
 mod value;
 mod wasm;
+mod wasm_local;
 mod wasm_stack;
 
 pub use template::SignalKind;
@@ -26,6 +28,8 @@ use module::*;
 use template::*;
 use types::*;
 use wasm::*;
+
+use crate::components::*;
 
 pub use template::TemplateInfo;
 pub use func::LocalVarInfo;
@@ -67,6 +71,26 @@ impl LigetronProducer {
         }
 
         debug_log!("LigetronProducer initialization begin");
+
+        debug_log!("IO MAP:");
+        for (id, entries) in &info.io_map {
+            debug_log!("IO COMPONENT {}:", id);
+            for entry in entries {
+                debug_log!("\tIO ENTRY:");
+
+                debug_log!("\t\tcode: {}", entry.code);
+                debug_log!("\t\toffset: {}", entry.offset);
+    
+                let lengths_str = entry.lengths.iter()
+                    .map(|ui| {ui.to_string()})
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                debug_log!("\t\tlengths: [{}]", lengths_str);
+    
+                debug_log!("\t\tsize: {}", entry.size);
+            }
+        }
+        debug_log!("IO MAP END");
 
         // creating new Circom module for generated code
         let module = Rc::new(RefCell::new(CircomModule::new(info.clone())));
@@ -151,6 +175,7 @@ impl LigetronProducer {
         let val = self.info.field_tracking[idx].parse::<BigInt>().unwrap();
         let min_int = BigInt::from(-2147483648);
         let max_int = BigInt::from(2147483647);
+
         return min_int <= val && val <= max_int;
     }
 
@@ -462,14 +487,19 @@ impl LigetronProducer {
         self.template().load_subcmp_address();
     }
 
-    /// Loads reference to subcomponent signal
+    /// Loads reference to subcomponent indexed signal
     pub fn load_subcmp_signal_ref(&mut self, size: usize) {
         self.template().load_subcmp_signal_ref(size);
     }
 
+    /// Loads reference to subcomponent mapped signal
+    pub fn load_subcmp_mapped_signal_ref(&mut self, signal_code: usize, indexes_count: usize) {
+        self.template().load_subcmp_mapped_signal_ref(signal_code, indexes_count);
+    }
+
     /// Generates code for running subcomponent after store to signal
-    pub fn gen_subcmp_run(&mut self, sig_size: usize) {
-        self.template().gen_subcmp_run(sig_size);
+    pub fn gen_subcmp_run(&mut self, sig_size: usize, is_mapped: bool) {
+        self.template().gen_subcmp_run(sig_size, is_mapped);
     }
 
 
@@ -912,7 +942,8 @@ impl Default for LigetronProducerInfo {
             main_comp_id: 0,
             string_table: vec![],
             field_tracking: vec![],
-            debug_output: false
+            debug_output: false,
+            io_map: TemplateInstanceIOMap::new()
         };
     }
 }
