@@ -1399,6 +1399,9 @@ impl CircomStackFrame {
         match val.xtype(self) {
             CircomValueType::FR => {
                 val.gen_load_ptr_to_wasm_stack(inst_gen, self);
+                inst_gen.gen_const(WASMType::I32, 0);
+                inst_gen.gen_store(&WASMType::I32);
+                val.gen_load_ptr_to_wasm_stack(inst_gen, self);
                 inst_gen.gen_call(&self.module.borrow().ligetron().fp256_init.to_wasm());
             }
             CircomValueType::Array(tp, size) => {

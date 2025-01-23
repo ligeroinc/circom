@@ -678,7 +678,13 @@ impl Template {
         // adding component into list of components
         // checking that subcomponent ID is equal to current number of subcomponents
         assert!(self.subcomponents.len() == subcmp_id);
-        self.subcomponents.push(subcmp);
+        self.subcomponents.push(subcmp.clone());
+
+        // executing subcomponent run function if number of input signals is zero
+        if template.signals.iter().filter(|s| { s.kind == SignalKind::Input }).count() == 0 {
+            self.func_.borrow_mut().load_ref(Box::new(subcmp));
+            self.gen_subcmp_run(None, false);
+        }
     }
 
     /// Creates multiple subcomponents with specified start index and size
@@ -950,7 +956,7 @@ impl Template {
     }
 
     /// Generates code for running subcomponent after store to signal
-    pub fn gen_subcmp_run(&mut self, sig_size: usize, is_mapped: bool) {
+    pub fn gen_subcmp_run(&mut self, sig_size: Option<usize>, is_mapped: bool) {
         let mut comp = match self.func().get_frame().top_component(0) {
             Some(comp) => comp,
             None => {
@@ -968,18 +974,20 @@ impl Template {
             comp.set_data(Box::new(WASMLocalVariableValuePtrRef::new(loc.clone(), comp.data_type())));
         }
 
-        // decreasing number of input signals for component
-        let counter = comp.input_signal_counter();
-        counter.gen_load_ptr_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
-        counter.gen_load_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
-        self.func().gen_wasm_const(WASMType::I32, sig_size as i64);
-        self.func().gen_wasm_sub(WASMType::I32);
-        self.func().gen_wasm_store(WASMType::I32);
+        if let Some(sig_sz) = sig_size {
+            // decreasing number of input signals for component
+            let counter = comp.input_signal_counter();
+            counter.gen_load_ptr_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
+            counter.gen_load_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
+            self.func().gen_wasm_const(WASMType::I32, sig_sz as i64);
+            self.func().gen_wasm_sub(WASMType::I32);
+            self.func().gen_wasm_store(WASMType::I32);
 
-        // running subcomponent code if all input signals were set
-        counter.gen_load_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
-        self.func().gen_wasm_if();
-        self.func().gen_wasm_else();
+            // running subcomponent code if all input signals were set
+            counter.gen_load_to_wasm_stack(&mut inst_gen_rc.borrow_mut(), &self.func().get_frame_mut());
+            self.func().gen_wasm_if();
+            self.func().gen_wasm_else();
+        }
 
         // calling subcomponent run function
         if is_mapped {
@@ -1010,7 +1018,9 @@ impl Template {
 
         self.func().debug_dump_state("AFTER COMP RUN CALL");
 
-        self.func().gen_wasm_endif();
+        if sig_size.is_some() {
+            self.func().gen_wasm_endif();
+        }
 
         // removing address of subcomponent from stack
         self.func().get_frame_mut().pop(1);

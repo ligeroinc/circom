@@ -499,7 +499,7 @@ impl LigetronProducer {
 
     /// Generates code for running subcomponent after store to signal
     pub fn gen_subcmp_run(&mut self, sig_size: usize, is_mapped: bool) {
-        self.template().gen_subcmp_run(sig_size, is_mapped);
+        self.template().gen_subcmp_run(Some(sig_size), is_mapped);
     }
 
 
