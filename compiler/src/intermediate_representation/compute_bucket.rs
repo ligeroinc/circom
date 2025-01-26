@@ -375,10 +375,83 @@ fn is_32bit_var_or_const(inst: &InstructionPointer, producer: &LigetronProducer)
     return is_32bit_var(inst, producer) || is_32bit_const(inst, producer);
 }
 
+/// Returns true if instruction is a constant with value 1
+fn is_const_one(inst: &InstructionPointer, producer: &LigetronProducer) -> bool {
+    match inst.as_ref() {
+        Instruction::Value(value_bucket) => {
+            let val = match value_bucket.parse_as {
+                ValueType::BigInt => {
+                    producer.global_const_as_32bit(value_bucket.value)
+                },
+                ValueType::U32 => {
+                    Some(value_bucket.value as u32)
+                }
+            };
+
+            if let Some(cval) = val {
+                return cval == 1;
+            }
+        }
+        _ => {}
+    }
+
+    return false;
+}
+
+/// Returns pair of operands for folded bit extract instruction if specified root
+/// instruction can be folder to bit exctract.
+fn get_bit_extract_ops<'a>(inst: &'a ComputeBucket,
+                           producer: &LigetronProducer) ->
+        Option<(&'a InstructionPointer, &'a InstructionPointer)> {
+
+    // checking for (x >> i) & 0x1 pattern
+    if inst.op == OperatorType::BitAnd {
+        let op0 = &inst.stack[0];
+        let op1 = &inst.stack[1];
+
+        if is_const_one(op1, &producer) {
+            if let Instruction::Compute(compute_bucket) = op0.as_ref() {
+                if compute_bucket.op == OperatorType::ShiftR &&
+                   is_32bit_instruction(&compute_bucket.stack[1], producer) {
+
+                    return Some((&compute_bucket.stack[0], &compute_bucket.stack[1]));
+                }
+            }
+        }
+    }
+
+    return None;
+}
+
 impl GenerateLigetron for ComputeBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
         producer.debug_dump_state("before compute bucket");
         producer.gen_comment("before compute bucket");
+
+        // (x >> i) & 0x1 to extract bit folding
+        if let Some((op1, op2)) = get_bit_extract_ops(self, &producer) {
+            println!("BIT EXTRACT!");
+
+            // extract bit should always be done in Fr mode
+            let prev_comp = producer.set_fr_computation_type();
+
+            // allocating stack value for computation result
+            producer.alloc_result();
+
+            // generating code for calculating operation arguments
+            op1.generate_ligetron(producer);
+            op2.generate_ligetron(producer);
+
+            // generating bit extract operation
+            producer.gen_bit_extract();
+
+            producer.set_computation_type(prev_comp);
+
+            producer.gen_comment("after bit extract compute bucket");
+            producer.debug_dump_state("after bit extract compute bucket");
+
+            return;
+        }
 
         // switching computation type to Fr if operator does not propogate 32bit
         // computation mode from result to operands

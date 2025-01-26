@@ -894,6 +894,16 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr bit extract operation
+    pub fn gen_fr_bit_exctact(&mut self) {
+        let be_func = self.module_ref().ligetron().fp256_bit_extract.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR, CircomValueType::WASM_I32()];
+        self.frame.gen_op(types, false, |mut func| {
+            func.gen_call(&be_func);
+        });
+    }
+
+
     /// Generates store of int value located on top of stack to location specified
     /// in the second stack value
     pub fn gen_int_store(&mut self) {

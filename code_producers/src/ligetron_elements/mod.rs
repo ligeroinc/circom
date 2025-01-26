@@ -179,6 +179,19 @@ impl LigetronProducer {
         return min_int <= val && val <= max_int;
     }
 
+    /// Returns global constant value as 32bit
+    pub fn global_const_as_32bit(&self, idx: usize) -> Option<u32> {
+        let val = self.info.field_tracking[idx].parse::<BigInt>().unwrap();
+        let min_int = BigInt::from(-2147483648);
+        let max_int = BigInt::from(2147483647);
+
+        if min_int <= val && val <= max_int {
+            return Some(val.get_limb(0) as u32);
+        } else {
+            return None;
+        }
+    }
+
     /// Returns true if local variable with specified index is 32bit
     pub fn is_local_var_32bit(&self, mut circom_idx: usize) -> bool {
         if self.template_rc.is_none() {
@@ -798,6 +811,15 @@ impl LigetronProducer {
             self.func().gen_int_bnot();
         } else {
             self.func().gen_fr_bnot();
+        }
+    }
+
+    /// Generates bit extract operation
+    pub fn gen_bit_extract(&mut self) {
+        if self.is_computation_type_wasm() {
+            panic!("bit extract must be done in Fr mode");
+        } else {
+            self.func().gen_fr_bit_exctact();
         }
     }
 
