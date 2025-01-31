@@ -39,6 +39,7 @@ pub struct LigetronContext {
     pub fp256_bxor: CircomFunctionRef,
     pub fp256_bnot: CircomFunctionRef,
 
+    pub fp256_bit_decompose_n: CircomFunctionRef,
     pub fp256_bit_extract: CircomFunctionRef,
 
     pub fp256_leq: CircomFunctionRef,
@@ -145,6 +146,14 @@ impl LigetronContext {
         let fp256_bxor = Self::import_function(module, "fp256_bxormod", fp256_op_type.clone());
         let fp256_bnot = Self::import_function(module, "fp256_bnotmod", fp256_op_type.clone());
 
+        let fp256_bit_decompose_n_type = CircomFunctionType::new(vec![CircomValueType::FR,
+                                                                      CircomValueType::FR,
+                                                                      CircomValueType::WASM_I32()],
+                                                                 vec![]);
+        let fp256_bit_decompose_n = Self::import_function(module,
+                                                          "fp256_bit_decompose_n",
+                                                          fp256_bit_decompose_n_type);
+
         let fp256_bit_extract_type = CircomFunctionType::new(vec![CircomValueType::FR,
                                                                   CircomValueType::WASM_I32()],
                                                              vec![CircomValueType::FR]);
@@ -199,6 +208,7 @@ impl LigetronContext {
             fp256_bxor: fp256_bxor,
             fp256_bnot: fp256_bnot,
 
+            fp256_bit_decompose_n: fp256_bit_decompose_n,
             fp256_bit_extract: fp256_bit_extract,
 
             fp256_leq: fp256_leq,

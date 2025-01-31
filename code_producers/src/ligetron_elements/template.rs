@@ -326,9 +326,14 @@ impl CircomComponent {
         return field(self.data_.as_ref(), 1);
     }
 
+    /// Returns index of field in data struct for io signal with specified index
+    pub fn io_signal_field_idx(&self, sig_idx: usize) -> usize {
+        return sig_idx + 2;
+    }
+
     /// Returns reference to input or output signal with specified index
     pub fn io_signal(&self, index: usize) -> Box<dyn CircomValueRef> {
-        return field(self.data_.as_ref(), index + 2);
+        return field(self.data_.as_ref(), self.io_signal_field_idx(index));
     }
 
     /// Returns reference to io signals as flatten array
@@ -1008,12 +1013,37 @@ impl Template {
         } else {
             // direct call to template run function
 
-            // loading pointer to subcomponent data
-            self.func().load_ref(comp.data().clone_ref());
+            if comp.template.name().starts_with("Num2Bits_") {
+                // Num2Bits optimization
 
-            self.func().debug_dump_state("BEFORE COMP RUN DIRECT CALL");
+                let out_signal = comp.io_signal(0);
+                let out_signal_type = out_signal.xtype(&self.func().get_frame_mut());
+                let n_bits = match out_signal_type {
+                    CircomValueType::Array(_tp, sz) => sz,
+                    _ => {
+                        panic!("Num2Bits out signal is not an array");
+                    }
+                };
 
-            self.func().gen_call(&comp.run_func());
+                // pointer to output signals
+                self.func().load_ref(comp.io_signal(0));
+
+                // pointer to input signal
+                self.func().load_ref(comp.io_signal(1));
+
+                // number of bits
+                self.func().load_i32_const(n_bits as i32);
+
+                let r_func = self.func().module_ref().ligetron().fp256_bit_decompose_n.clone();
+                self.func().gen_call(&r_func);
+            } else {
+                // loading pointer to subcomponent data
+                self.func().load_ref(comp.data().clone_ref());
+
+                self.func().debug_dump_state("BEFORE COMP RUN DIRECT CALL");
+
+                self.func().gen_call(&comp.run_func());
+            }
         }
 
         self.func().debug_dump_state("AFTER COMP RUN CALL");
