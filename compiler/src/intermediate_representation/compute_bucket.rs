@@ -333,15 +333,20 @@ fn is_32bit_const(inst: &InstructionPointer, producer: &LigetronProducer) -> boo
 fn is_32bit_instruction(inst: &InstructionPointer, producer: &LigetronProducer) -> bool {
     match inst.as_ref() {
         Instruction::Load(load_bucket) => {
-            match &load_bucket.src {
-                LocationRule::Indexed { location, .. } => {
-                    match location.as_ref() {
-                        Instruction::Value(value_bucket) => {
-                            producer.is_local_var_32bit(value_bucket.value)
+            match load_bucket.address_type {
+                AddressType::Variable => {
+                    match &load_bucket.src {
+                        LocationRule::Indexed { location, .. } => {
+                            match location.as_ref() {
+                                Instruction::Value(value_bucket) => {
+                                    producer.is_local_var_32bit(value_bucket.value)
+                                }
+                                _ => false
+                            }
                         }
                         _ => false
                     }
-                }
+                },
                 _ => false
             }
         }
