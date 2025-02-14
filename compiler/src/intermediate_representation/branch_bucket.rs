@@ -100,14 +100,14 @@ impl WriteWasm for BranchBucket {
 
 impl GenerateLigetron for BranchBucket {
     fn generate_ligetron(&self, producer: &mut LigetronProducer) {
-        producer.debug_dump_state("before loop bucket");
-        producer.gen_comment("loop bucket begin");
+        producer.debug_dump_state("before branch bucket");
+        producer.gen_comment("branch bucket begin");
 
         // generating condition check using int computatation mode
-        let old_comp_type = producer.set_int_computation_type();
+        let old_comp_mode = producer.set_int_computation_mode();
         self.cond.generate_ligetron(producer);
         producer.gen_if();
-        producer.set_computation_type(old_comp_type);
+        producer.set_computation_mode(old_comp_mode);
 
         for inst in &self.if_branch {
             inst.generate_ligetron(producer);
@@ -121,8 +121,8 @@ impl GenerateLigetron for BranchBucket {
 
         producer.gen_endif();
 
-        producer.gen_comment("loop bucket end");
-        producer.debug_dump_state("after loop bucket");
+        producer.gen_comment("branch bucket end");
+        producer.debug_dump_state("after branch bucket");
     }
 }
 

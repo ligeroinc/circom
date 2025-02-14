@@ -190,7 +190,7 @@ impl CircomFunction {
         self.load_ref(Box::new(tmp_val));
         self.load_wasm_const(WASMType::I64, val);
         let fp256_set_ui = self.module_ref().ligetron().fp256_set_ui.clone();
-        self.gen_call(&fp256_set_ui);
+        self.gen_call(&fp256_set_ui, false);
     }
 
 
@@ -332,7 +332,7 @@ impl CircomFunction {
     pub fn convert_index(&mut self) {
         // using gen_op function to convert possible fp256 value to I32
         let types = vec![CircomValueType::WASM(WASMType::I32)];
-        self.frame.gen_op(types, false, |_| {});
+        self.frame.gen_op(types, vec![], false, |_| {});
 
         // adding I32 value to stack
         self.frame.push_wasm_stack(WASMType::I32);
@@ -543,7 +543,7 @@ impl CircomFunction {
             CircomValueType::FR => {
                 let types = vec![CircomValueType::FR];
                 let fp256_eqz = self.module_ref().ligetron().fp256_eqz.to_wasm();
-                self.frame.gen_op(types, false, |mut func| {
+                self.frame.gen_op(types, vec![], false, |mut func| {
                     func.gen_call(&fp256_eqz);
                 });
             }
@@ -563,7 +563,7 @@ impl CircomFunction {
     /// Generates if branch depending on value located on top of stack
     pub fn gen_if(&mut self) {
         let types = vec![CircomValueType::WASM(WASMType::I32)];
-        self.frame.gen_op(types, false, |mut func| {
+        self.frame.gen_op(types, vec![], false, |mut func| {
             func.gen_if();
         });
 
@@ -578,7 +578,7 @@ impl CircomFunction {
     fn gen_int_bin_op<Op: FnOnce(RefMut<WASMFunction>) -> ()>(&mut self, op: Op) {
         let i32t = CircomValueType::WASM(WASMType::I32);
         let types = vec![i32t.clone(), i32t.clone()];
-        self.frame.gen_op(types, false, op);
+        self.frame.gen_op(types, vec![], false, op);
 
         // adding result WASM value to logical stack
         self.frame.push_wasm_stack(WASMType::I32);
@@ -588,7 +588,7 @@ impl CircomFunction {
     fn gen_int_cmp_op<Op: FnOnce(RefMut<WASMFunction>) -> ()>(&mut self, op: Op) {
         let i32t = CircomValueType::WASM(WASMType::I32);
         let types = vec![i32t.clone(), i32t.clone()];
-        self.frame.gen_op(types, false, op);
+        self.frame.gen_op(types, vec![], false, op);
 
         // adding result WASM value to logical stack
         self.frame.push_wasm_stack(WASMType::I32);
@@ -751,7 +751,7 @@ impl CircomFunction {
     /// Generates Fr binary operation
     fn gen_fr_bin_op(&mut self, op_func: WASMFunctionRef) {
         let types = vec![CircomValueType::FR, CircomValueType::FR, CircomValueType::FR];
-        self.frame.gen_op(types, false, |mut func| {
+        self.frame.gen_op(types, vec![], false, |mut func| {
             func.gen_call(&op_func);
         });
     }
@@ -762,9 +762,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr mul operation without constraints
+    pub fn gen_fr_mul_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_mulmod_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr div operation
     pub fn gen_fr_div(&mut self) {
         let func = self.module_ref().ligetron().fp256_divmod.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr div operation without constraints
+    pub fn gen_fr_div_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_divmod_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -774,9 +786,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr add operation without constraints
+    pub fn gen_fr_add_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_addmod_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr sub operation
     pub fn gen_fr_sub(&mut self) {
         let func = self.module_ref().ligetron().fp256_submod.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr sub operation without constraints
+    pub fn gen_fr_sub_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_submod_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -786,9 +810,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr pow operation without constraints
+    pub fn gen_fr_pow_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_pow_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr idiv operation
     pub fn gen_fr_idiv(&mut self) {
         let func = self.module_ref().ligetron().fp256_idiv.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr idiv operation without constraints
+    pub fn gen_fr_idiv_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_idiv_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -798,9 +834,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr mod operation without constraints
+    pub fn gen_fr_mod_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_mod_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr shl operation
     pub fn gen_fr_shl(&mut self) {
         let func = self.module_ref().ligetron().fp256_shl.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr shl operation without constraints
+    pub fn gen_fr_shl_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_shl_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -810,9 +858,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr shr operation without constraints
+    pub fn gen_fr_shr_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_shr_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr leq operation
     pub fn gen_fr_leq(&mut self) {
         let func = self.module_ref().ligetron().fp256_leq.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr leq operation without constraints
+    pub fn gen_fr_leq_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_leq_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -822,9 +882,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr geq operation without constraints
+    pub fn gen_fr_geq_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_geq_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr lt operation
     pub fn gen_fr_lt(&mut self) {
         let func = self.module_ref().ligetron().fp256_lt.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr lt operation without constraints
+    pub fn gen_fr_lt_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_lt_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -834,9 +906,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr gt operation without constraints
+    pub fn gen_fr_gt_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_gt_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr eq operation
     pub fn gen_fr_eq(&mut self) {
         let func = self.module_ref().ligetron().fp256_eq.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr eq operation without constraints
+    pub fn gen_fr_eq_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_eq_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -846,9 +930,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr neq operation without constraints
+    pub fn gen_fr_neq_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_neq_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr lor operation
     pub fn gen_fr_lor(&mut self) {
         let func = self.module_ref().ligetron().fp256_lor.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr lor operation without constraints
+    pub fn gen_fr_lor_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_lor_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -858,9 +954,21 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr land operation without constraints
+    pub fn gen_fr_land_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_land_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr bor operation
     pub fn gen_fr_bor(&mut self) {
         let func = self.module_ref().ligetron().fp256_bor.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
+    /// Generates Fr bor operation without constraints
+    pub fn gen_fr_bor_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_bor_raw.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
@@ -870,35 +978,92 @@ impl CircomFunction {
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr band operation
+    pub fn gen_fr_band_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_band_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr bxor operation
     pub fn gen_fr_bxor(&mut self) {
         let func = self.module_ref().ligetron().fp256_bxor.to_wasm();
         self.gen_fr_bin_op(func);
     }
 
+    /// Generates Fr bxor operation without constraints
+    pub fn gen_fr_bxor_raw(&mut self) {
+        let func = self.module_ref().ligetron().fp256_bxor_raw.to_wasm();
+        self.gen_fr_bin_op(func);
+    }
+
     /// Generates Fr neg operation
     pub fn gen_fr_neg(&mut self) {
-        let func = self.module_ref().ligetron().fp256_neg.to_wasm();
-        self.gen_fr_bin_op(func);
+        let neg_func = self.module_ref().ligetron().fp256_neg.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR];
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&neg_func);
+        });
+    }
+
+    /// Generates Fr neg operation without constraints
+    pub fn gen_fr_neg_raw(&mut self) {
+        let neg_func = self.module_ref().ligetron().fp256_neg_raw.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR];
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&neg_func);
+        });
     }
 
     /// Generates Fr lnot operation
     pub fn gen_fr_lnot(&mut self) {
-        let func = self.module_ref().ligetron().fp256_lnot.to_wasm();
-        self.gen_fr_bin_op(func);
+        let lnot_func = self.module_ref().ligetron().fp256_lnot.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR];
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&lnot_func);
+        });
+    }
+
+    /// Generates Fr lnot operation without constraints
+    pub fn gen_fr_lnot_raw(&mut self) {
+        let lnot_func = self.module_ref().ligetron().fp256_lnot_raw.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR];
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&lnot_func);
+        });
     }
 
     /// Generates Fr bnot operation
     pub fn gen_fr_bnot(&mut self) {
-        let func = self.module_ref().ligetron().fp256_bnot.to_wasm();
-        self.gen_fr_bin_op(func);
+        let bnot_func = self.module_ref().ligetron().fp256_bnot.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR];
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&bnot_func);
+        });
+    }
+
+    /// Generates Fr bnot operation without constraints
+    pub fn gen_fr_bnot_raw(&mut self) {
+        let bnot_func = self.module_ref().ligetron().fp256_bnot_raw.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR];
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&bnot_func);
+        });
     }
 
     /// Generates Fr bit extract operation
     pub fn gen_fr_bit_exctact(&mut self) {
         let be_func = self.module_ref().ligetron().fp256_bit_extract.to_wasm();
         let types = vec![CircomValueType::FR, CircomValueType::FR, CircomValueType::WASM_I32()];
-        self.frame.gen_op(types, false, |mut func| {
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&be_func);
+        });
+    }
+
+    /// Generates Fr bit extract operation without constraints
+    pub fn gen_fr_bit_exctact_raw(&mut self) {
+        let be_func = self.module_ref().ligetron().fp256_bit_extract_raw.to_wasm();
+        let types = vec![CircomValueType::FR, CircomValueType::FR, CircomValueType::WASM_I32()];
+        self.frame.gen_op(types, vec![], false, |mut func| {
             func.gen_call(&be_func);
         });
     }
@@ -912,7 +1077,7 @@ impl CircomFunction {
         // be loaded as pointer
         let types = vec![CircomValueType::WASM(WASMType::I32),
                          CircomValueType::WASM(WASMType::I32)];
-        self.frame.gen_op(types, true, |mut func| {
+        self.frame.gen_op(types, vec![], true, |mut func| {
             func.gen_store(&WASMType::I32);
         });
     }
@@ -921,16 +1086,29 @@ impl CircomFunction {
     /// in the second stack value
     pub fn gen_store_fr(&mut self) {
         let fp256_set_fp256 = self.module_ref().ligetron().fp256_set_fp256.to_wasm();
-        self.frame.gen_op(vec![CircomValueType::FR, CircomValueType::FR], false, |mut func| {
+        self.frame.gen_op(vec![CircomValueType::FR, CircomValueType::FR], vec![], false, |mut func| {
             func.gen_call(&fp256_set_fp256);
         });
     }
 
-    /// Generates saving multiple Circom value located on top of stack to location specified
+    /// Generates store of Fr value located on top of stack to location specified
+    /// in the second stack value, with creating witness for stored value
+    pub fn gen_store_fr_with_witness(&mut self) {
+        let fp256_set_fp256 = self.module_ref().ligetron().fp256_set_fp256_with_witness.to_wasm();
+        self.frame.gen_op(vec![CircomValueType::FR, CircomValueType::FR], vec![], false, |mut func| {
+            func.gen_call(&fp256_set_fp256);
+        });
+    }
+
+    /// Generates saving multiple Circom values located on top of stack to location specified
     /// in the second stack value
-    pub fn gen_fr_store_n(&mut self, size: usize) {
+    pub fn gen_fr_store_n(&mut self, size: usize, with_witness: bool) {
         if size == 1 {
-            self.gen_store_fr();
+            if with_witness {
+                self.gen_store_fr_with_witness();
+            } else {
+                self.gen_store_fr();
+            }
         } else {
             let src_ref = self.frame.top(0);
             let dst_ref = self.frame.top(1);
@@ -942,55 +1120,12 @@ impl CircomFunction {
 
             self.frame.load_values_to_wasm_stack(2, CircomValueType::FR);
 
-            let dst_ptr_var = self.new_wasm_local(WASMType::PTR);
-            let src_ptr_var = self.new_wasm_local(WASMType::PTR);
-            let src_end_ptr_var = self.new_wasm_local(WASMType::PTR);
-
-            self.gen_wasm_comment(&format!("; store {} elements", size));
-
-            // saving src and dst pointers
-            self.gen_wasm_local_set(&src_ptr_var);
-            self.gen_wasm_local_set(&dst_ptr_var);
-
-            // calculating end source pointer
-            self.gen_wasm_local_get(&src_ptr_var);
-            self.gen_wasm_const(WASMType::I32, (size * CircomValueType::FR.size()) as i64);
-            self.gen_wasm_add(WASMType::PTR);
-            self.gen_wasm_local_set(&src_end_ptr_var);
-
-            self.debug_dump_state("BEFORE LOOP");
-
-            self.gen_wasm_loop_start();
-
-            // checking for loop exit
-            self.gen_wasm_local_get(&src_ptr_var);
-            self.gen_wasm_local_get(&src_end_ptr_var);
-            self.gen_wasm_eq(WASMType::PTR);
-            self.gen_wasm_loop_exit();
-
-            self.debug_dump_state("BEFORE COPY");
-
-            // copy function call
-            self.gen_wasm_local_get(&dst_ptr_var);
-            self.gen_wasm_local_get(&src_ptr_var);
-            let fp256_set_fp256 = self.module_ref().ligetron().fp256_set_fp256.to_wasm();
-            self.gen_wasm_call(&fp256_set_fp256);
-
-            self.debug_dump_state("AFTER COPY");
-
-            // incrementing src pointer
-            self.gen_wasm_local_get(&src_ptr_var);
-            self.gen_wasm_const(WASMType::I32, CircomValueType::FR.size() as i64);
-            self.gen_wasm_add(WASMType::PTR);
-            self.gen_wasm_local_set(&src_ptr_var);
-
-            // incrementing dst pointer
-            self.gen_wasm_local_get(&dst_ptr_var);
-            self.gen_wasm_const(WASMType::I32, CircomValueType::FR.size() as i64);
-            self.gen_wasm_add(WASMType::PTR);
-            self.gen_wasm_local_set(&dst_ptr_var);
-
-            self.gen_wasm_loop_end();
+            let copy_func = if with_witness {
+                self.module_ref().ligetron().fp256_set_fp256_with_witness.to_wasm()
+            } else {
+                self.module_ref().ligetron().fp256_set_fp256.to_wasm()
+            };
+            gen_fr_array_copy(&mut self.func.borrow_mut(), &copy_func, size);
 
             // popping original values from stack
             self.frame.pop(2);
@@ -1000,12 +1135,12 @@ impl CircomFunction {
     /// Generates assert equal operation
     pub fn assert_equal(&mut self) {
         let fp256_assert_equal = self.module_ref().ligetron().fp256_assert_equal.clone();
-        self.gen_call(&fp256_assert_equal);
+        self.gen_call(&fp256_assert_equal, false);
     }
 
     /// Generates call to function passing values located on top of stack as parameters
-    pub fn gen_call(&mut self, func_ref: &CircomFunctionRef) {
-        self.frame.gen_call(func_ref);
+    pub fn gen_call(&mut self, func_ref: &CircomFunctionRef, remove_constraints: bool) {
+        self.frame.gen_call(func_ref, remove_constraints);
     }
 
 

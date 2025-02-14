@@ -127,7 +127,7 @@ pub fn generate_entry(module: Rc<RefCell<CircomModule>>, func_name: String) {
 
     // executing main component
     func.gen_wasm_comment("executing main component");
-    func.gen_call(&main_comp.run_func());
+    func.gen_call(&main_comp.run_func(), false);
 
     // calling exit function at the end of entry function
     // TODO: pass correct exit code?

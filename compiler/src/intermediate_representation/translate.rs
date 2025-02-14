@@ -1,5 +1,6 @@
 use super::ir_interface::*;
 use crate::hir::very_concrete_program::*;
+use crate::intermediate_representation::constraints::analyze_var_constraints;
 use crate::intermediate_representation::log_bucket::LogBucketArg;
 use crate::intermediate_representation::types::SizeOption;
 use constant_tracking::ConstantTracker;
@@ -9,6 +10,7 @@ use program_structure::file_definition::FileLibrary;
 use program_structure::utils::environment::VarEnvironment;
 use std::collections::{HashMap, BTreeMap, HashSet};
 use std::mem;
+use by_address::ByAddress;
 
 type Length = usize;
 pub type E = VarEnvironment<SymbolInfo>;
@@ -87,6 +89,8 @@ impl TemplateDB {
             ConstantTracker::new(),
             HashMap::with_capacity(0),
             instance.signals_to_tags.clone(),
+            HashSet::new(),
+            false
         );
         let mut wire_info = HashMap::new();
         for wire in &instance.wires {
@@ -118,7 +122,7 @@ impl TemplateDB {
 }
 
 
-struct State {
+struct State<'ast> {
     field_tracker: FieldTracker,
     environment: E,
     component_to_parallel:  HashMap<String, ParallelClusters>,
@@ -135,15 +139,19 @@ struct State {
     code: InstructionList,
     // string_table
     string_table: HashMap<String, usize>,
+    constr_stmts: HashSet<ByAddress<&'ast Statement>>,
+    is_func: bool,
 }
 
-impl State {
+impl <'ast> State<'ast> {
     fn new(
         msg_id: usize,
         cmp_id_offset: usize,
         field_tracker: FieldTracker,
         component_to_parallel:  HashMap<String, ParallelClusters>,
-        signal_to_tags: BTreeMap<String, TagInfo>
+        signal_to_tags: BTreeMap<String, TagInfo>,
+        constr_stmts: HashSet<ByAddress<&'ast Statement>>,
+        is_func: bool
     ) -> State {
         State {
             field_tracker,
@@ -161,6 +169,8 @@ impl State {
             max_stack_depth: 0,
             code: vec![],
             string_table : HashMap::new(),
+            constr_stmts,
+            is_func: is_func
         }
     }
     fn reserve(fresh: &mut usize, size: usize) -> usize {
@@ -282,6 +292,7 @@ fn initialize_constants(state: &mut State, constants: Vec<Argument>) {
                 src_context: InstrContext {size: SizeOption::Single(1)},
                 src_address_type: None,
                 src: content,
+                dest_constrained: false,
             }
             .allocate();
             state.code.push(store_instruction);
@@ -504,7 +515,7 @@ fn create_mixed_components(state: &mut State, triggers: &[Trigger], cluster: Tri
 }
 
 // Start of translation utils
-fn translate_statement(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_statement(stmt: &Statement, state: &mut State, context: &Context) {
     if stmt.is_declaration() {
         translate_declaration(stmt, state, context);
     } else if stmt.is_substitution() {
@@ -530,16 +541,16 @@ fn translate_statement(stmt: Statement, state: &mut State, context: &Context) {
     }
 }
 
-fn translate_if_then_else(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_if_then_else(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::IfThenElse;
     if let IfThenElse { meta, cond, if_case, else_case, .. } = stmt {
         let starts_at = context.files.get_line(meta.start, meta.get_file_id()).unwrap();
         let main_program = std::mem::replace(&mut state.code, vec![]);
-        let cond_translation = translate_expression(cond, state, context);
-        translate_statement(*if_case, state, context);
+        let cond_translation = translate_expression(&cond, state, context);
+        translate_statement(if_case, state, context);
         let if_code = std::mem::replace(&mut state.code, vec![]);
         if let Option::Some(else_case) = else_case {
-            translate_statement(*else_case, state, context);
+            translate_statement(else_case, state, context);
         }
         let else_code = std::mem::replace(&mut state.code, main_program);
         let branch_instruction = BranchBucket {
@@ -554,13 +565,13 @@ fn translate_if_then_else(stmt: Statement, state: &mut State, context: &Context)
     }
 }
 
-fn translate_while(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_while(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::While;
     if let While { meta, cond, stmt, .. } = stmt {
         let starts_at = context.files.get_line(meta.start, meta.get_file_id()).unwrap();
         let main_program = std::mem::replace(&mut state.code, vec![]);
         let cond_translation = translate_expression(cond, state, context);
-        translate_statement(*stmt, state, context);
+        translate_statement(stmt, state, context);
         let loop_code = std::mem::replace(&mut state.code, main_program);
         let loop_instruction = LoopBucket {
             line: starts_at,
@@ -573,13 +584,33 @@ fn translate_while(stmt: Statement, state: &mut State, context: &Context) {
     }
 }
 
-fn translate_substitution(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_substitution(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::Substitution;
-    if let Substitution { meta, var, access, rhe, .. } = stmt {
+    if let Substitution { meta, var, access, rhe, op, .. } = stmt {
         debug_assert!(!meta.get_type_knowledge().is_component());
-        let def = SymbolDef { meta: meta.clone(), symbol: var, acc: access };
-        let str_info =
-            StoreInfo { prc_symbol: ProcessedSymbol::new(def, state, context), src: rhe };
+        let def = SymbolDef { meta: meta.clone(), symbol: var.clone(), acc: access.clone() };
+        
+        let constrained = if state.is_func {
+            // we always generate constrained code for function because we don't know
+            // where this function will be called
+            true
+        }  else {
+            if *op == AssignOp::AssignConstraintSignal {
+                true
+            } else {
+                if *op == AssignOp::AssignVar {
+                    state.constr_stmts.contains(&ByAddress(stmt))
+                } else {
+                    false
+                }
+            }
+        };
+
+        let str_info = StoreInfo {
+            prc_symbol: ProcessedSymbol::new(def, state, context),
+            src: rhe,
+            constrained: constrained
+        };
         let store_instruction = if str_info.src.is_call() {
             translate_call_case(str_info, state, context)
         } else {
@@ -592,9 +623,10 @@ fn translate_substitution(stmt: Statement, state: &mut State, context: &Context)
 }
 
 // Start of substitution utils
-struct StoreInfo {
+struct StoreInfo<'a> {
     prc_symbol: ProcessedSymbol,
-    src: Expression,
+    src: &'a Expression,
+    constrained: bool
 }
 fn translate_call_case(
     info: StoreInfo,
@@ -604,7 +636,7 @@ fn translate_call_case(
     use Expression::Call;
     if let Call { id, args, .. } = info.src {
         let args_instr = translate_call_arguments(args, state, context);
-        info.prc_symbol.into_call_assign(id, args_instr, &state)
+        info.prc_symbol.into_call_assign(id.clone(), args_instr, &state, info.constrained)
     } else {
         unreachable!()
     }
@@ -617,12 +649,12 @@ fn translate_standard_case(
 ) -> InstructionPointer {
     let (src_size, src_address)= get_expression_size(&info.src, state, context);
     let src = translate_expression(info.src, state, context);
-    info.prc_symbol.into_store(src, state, src_size, src_address)
+    info.prc_symbol.into_store(src, state, src_size, src_address, info.constrained)
 }
 
 // End of substitution utils
 
-fn translate_declaration(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_declaration(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::Declaration;
     if let Declaration { name, meta, .. } = stmt {
         let starts_at = context.files.get_line(meta.start, meta.get_file_id()).unwrap();
@@ -651,7 +683,7 @@ fn translate_declaration(stmt: Statement, state: &mut State, context: &Context) 
     }
 }
 
-fn translate_block(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_block(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::Block;
     if let Block { stmts, .. } = stmt {
 //        let save_variable_address = state.variable_stack;
@@ -666,7 +698,7 @@ fn translate_block(stmt: Statement, state: &mut State, context: &Context) {
     }
 }
 
-fn translate_constraint_equality(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_constraint_equality(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::ConstraintEquality;
     use Expression::Variable;
     if let ConstraintEquality { meta, lhe, rhe } = stmt {
@@ -701,7 +733,7 @@ fn translate_constraint_equality(stmt: Statement, state: &mut State, context: &C
     }
 }
 
-fn translate_assert(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_assert(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::Assert;
     if let Assert { meta, arg, .. } = stmt {
         let line = context.files.get_line(meta.start, meta.get_file_id()).unwrap();
@@ -711,7 +743,7 @@ fn translate_assert(stmt: Statement, state: &mut State, context: &Context) {
     }
 }
 
-fn translate_log(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_log(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::LogCall;
     if let LogCall { meta, args, .. } = stmt {
         let line = context.files.get_line(meta.start, meta.get_file_id()).unwrap();
@@ -723,11 +755,11 @@ fn translate_log(stmt: Statement, state: &mut State, context: &Context) {
                     logbucket_args.push(LogBucketArg::LogExp(code));
                 }
                 LogArgument::LogStr(exp) => {
-                    match state.string_table.get(&exp) {
+                    match state.string_table.get(exp) {
                         Some( idx) => {logbucket_args.push(LogBucketArg::LogStr(*idx));},
                         None => {
                             logbucket_args.push(LogBucketArg::LogStr(state.string_table.len()));
-                            state.string_table.insert(exp, state.string_table.len());
+                            state.string_table.insert(exp.clone(), state.string_table.len());
                         },
                     }
                     
@@ -744,7 +776,7 @@ fn translate_log(stmt: Statement, state: &mut State, context: &Context) {
     }
 }
 
-fn translate_return(stmt: Statement, state: &mut State, context: &Context) {
+fn translate_return(stmt: &Statement, state: &mut State, context: &Context) {
     use Statement::Return;
     if let Return { meta, value, .. } = stmt {
         
@@ -766,7 +798,7 @@ fn translate_return(stmt: Statement, state: &mut State, context: &Context) {
 }
 
 fn translate_expression(
-    expression: Expression,
+    expression: &Expression,
     state: &mut State,
     context: &Context,
 ) -> InstructionPointer {
@@ -790,7 +822,7 @@ fn translate_expression(
 }
 
 fn translate_call(
-    expression: Expression,
+    expression: &Expression,
     state: &mut State,
     context: &Context,
 ) -> InstructionPointer {
@@ -801,7 +833,7 @@ fn translate_call(
         CallBucket {
             line: context.files.get_line(meta.start, meta.get_file_id()).unwrap(),
             message_id: state.message_id,
-            symbol: id,
+            symbol: id.clone(),
             argument_types: args_inst.argument_data,
             arguments: args_inst.arguments,
             arena_size: 200,
@@ -814,18 +846,18 @@ fn translate_call(
 }
 
 fn translate_infix(
-    expression: Expression,
+    expression: &Expression,
     state: &mut State,
     context: &Context,
 ) -> InstructionPointer {
     use Expression::InfixOp;
     if let InfixOp { meta, infix_op, rhe, lhe, .. } = expression {
-        let lhi = translate_expression(*lhe, state, context);
-        let rhi = translate_expression(*rhe, state, context);
+        let lhi = translate_expression(lhe, state, context);
+        let rhi = translate_expression(rhe, state, context);
         ComputeBucket {
             line: context.files.get_line(meta.start, meta.get_file_id()).unwrap(),
             message_id: state.message_id,
-            op: translate_infix_operator(infix_op),
+            op: translate_infix_operator(*infix_op),
             op_aux_no: 0,
             stack: vec![lhi, rhi],
         }
@@ -836,18 +868,18 @@ fn translate_infix(
 }
 
 fn translate_prefix(
-    expression: Expression,
+    expression: &Expression,
     state: &mut State,
     context: &Context,
 ) -> InstructionPointer {
     use Expression::PrefixOp;
     if let PrefixOp { meta, prefix_op, rhe, .. } = expression {
-        let rhi = translate_expression(*rhe, state, context);
+        let rhi = translate_expression(rhe, state, context);
         ComputeBucket {
             line: context.files.get_line(meta.start, meta.get_file_id()).unwrap(),
             message_id: state.message_id,
             op_aux_no: 0,
-            op: translate_prefix_operator(prefix_op),
+            op: translate_prefix_operator(*prefix_op),
             stack: vec![rhi],
         }
         .allocate()
@@ -883,7 +915,7 @@ fn check_tag_access(name_signal: &String, access: &Vec<Access>, state: &mut Stat
 }
 
 fn translate_variable(
-    expression: Expression,
+    expression: &Expression,
     state: &mut State,
     context: &Context,
 ) -> InstructionPointer {
@@ -891,9 +923,9 @@ fn translate_variable(
     if let Variable { meta, name, access, .. } = expression {
         let tag_access = check_tag_access(&name, &access, state);
         if tag_access.is_some(){
-            translate_number( Expression::Number(meta.clone(), tag_access.unwrap()), state, context)
+            translate_number( &Expression::Number(meta.clone(), tag_access.unwrap()), state, context)
         } else{
-            let def = SymbolDef { meta, symbol: name, acc: access };
+            let def = SymbolDef { meta: meta.clone(), symbol: name.clone(), acc: access.clone() };
             ProcessedSymbol::new(def, state, context).into_load(state)
         }
     } else {
@@ -902,7 +934,7 @@ fn translate_variable(
 }
 
 fn translate_number(
-    expression: Expression,
+    expression: &Expression,
     state: &mut State,
     context: &Context,
 ) -> InstructionPointer {
@@ -1113,7 +1145,7 @@ impl ProcessedSymbol {
                         index += 1;
                     }
                     
-                    current_index.push(translate_expression(exp, state, context));
+                    current_index.push(translate_expression(&exp, state, context));
                 }
 
                 ComponentAccess(name) => {
@@ -1320,6 +1352,7 @@ impl ProcessedSymbol {
         id: String,
         args: ArgData,
         state: &State,
+        constrained: bool,
     ) -> InstructionPointer {
         let data = if let Option::Some(signal) = self.signal {
             let dest_type = AddressType::SubcmpSignal {
@@ -1343,6 +1376,7 @@ impl ProcessedSymbol {
                 dest_is_output: false,
                 dest_address_type: dest_type,
                 dest: signal,
+                dest_constrained: constrained
             }
         } else {
             let address = compute_full_address(
@@ -1361,6 +1395,7 @@ impl ProcessedSymbol {
                 dest_is_output: self.signal_type.map_or(false, |t| t == SignalType::Output),
                 dest_address_type: xtype,
                 dest: LocationRule::Indexed { location: address, template_header: None },
+                dest_constrained: constrained
             }
         };
         CallBucket {
@@ -1380,7 +1415,8 @@ impl ProcessedSymbol {
         InstructionPointer, 
         state: &State, 
         src_size: SizeOption,
-        src_address: Option<InstructionPointer>
+        src_address: Option<InstructionPointer>,
+        constrained: bool
     ) -> InstructionPointer {
         if let Option::Some(signal) = self.signal {
             let dest_type = AddressType::SubcmpSignal {
@@ -1408,7 +1444,8 @@ impl ProcessedSymbol {
                 src_context: InstrContext {size: src_size},
                 dest_is_output: false,
                 dest_address_type: dest_type,
-                src_address_type: src_address
+                src_address_type: src_address,
+                dest_constrained: constrained
             }
             .allocate()
         } else {
@@ -1433,7 +1470,8 @@ impl ProcessedSymbol {
                 dest: LocationRule::Indexed { location: address, template_header: None },
                 context: InstrContext { size: self.length },
                 src_context: InstrContext {size: src_size},
-                src_address_type: src_address
+                src_address_type: src_address,
+                dest_constrained: constrained
             }
             .allocate()
         }
@@ -1760,7 +1798,7 @@ struct ArgData {
     arguments: InstructionList,
 }
 fn translate_call_arguments(
-    args: Vec<Expression>,
+    args: &Vec<Expression>,
     state: &mut State,
     context: &Context,
 ) -> ArgData {
@@ -1879,14 +1917,19 @@ pub struct CodeOutput {
     pub variables: Vec<usize>,
 }
 
-pub fn translate_code(body: Statement, code_info: CodeInfo) -> CodeOutput {
+pub fn translate_code(body: Statement, is_func: bool, code_info: CodeInfo) -> CodeOutput {
     use crate::ir_processing;
+
+    let constr_stmts = analyze_var_constraints(&body);
+
     let mut state = State::new(
         code_info.message_id,
         code_info.fresh_cmp_id,
         code_info.field_tracker,
         code_info.component_to_parallel,
         code_info.signals_to_tags,
+        constr_stmts,
+        is_func
     );
     state.string_table = code_info.string_table;
     initialize_components(&mut state, code_info.components);
@@ -1904,7 +1947,7 @@ pub fn translate_code(body: Statement, code_info: CodeInfo) -> CodeOutput {
     };
 
     create_components(&mut state, &code_info.triggers, code_info.clusters);
-    translate_statement(body, &mut state, &context);
+    translate_statement(&body, &mut state, &context);
 
     ir_processing::build_inputs_info(&mut state.code);
 

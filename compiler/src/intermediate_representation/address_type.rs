@@ -51,12 +51,12 @@ impl ToString for AddressType {
 }
 
 
-/// Generates loading of value reference for Ligetron target
+/// Generates loading of value reference for Ligetron target.
+/// Returns true if loaded reference is 32bit.
 pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                                   loc: &LocationRule,
                                   addr_t: &AddressType,
-                                  size: &SizeOption,
-                                  for_store: bool) {
+                                  size: &SizeOption) -> bool {
 
     let sz = match &size {
         SizeOption::Single(size) => *size,
@@ -69,9 +69,9 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
     match &addr_t {
         AddressType::SubcmpSignal { cmp_address, .. } => {
             // generating code for calculating subcomponent index
-            let old_comp_type = producer.set_addr_computation_type();
+            let old_comp_mode = producer.set_addr_computation_mode();
             cmp_address.generate_ligetron(producer);
-            producer.set_computation_type(old_comp_type);
+            producer.set_computation_mode(old_comp_mode);
 
             // loading subcomponent address
             producer.load_subcmp_address();
@@ -84,19 +84,21 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
     match &loc {
         LocationRule::Indexed { location, .. } => {
             // generating code for calculating value index
-            let old_comp_type = producer.set_addr_computation_type();
+            let old_comp_mode = producer.set_addr_computation_mode();
             location.generate_ligetron(producer);
-            producer.set_computation_type(old_comp_type);
+            producer.set_computation_mode(old_comp_mode);
 
             match &addr_t {
                 AddressType::Variable => {
-                    producer.load_local_var_ref(sz, for_store);
+                    return producer.load_local_var_ref(sz);
                 }
                 AddressType::Signal => {
                     producer.load_signal_ref(sz);
+                    return false;
                 }
                 AddressType::SubcmpSignal { .. } => {
                     producer.load_subcmp_signal_ref(sz);
+                    return false;
                 }
             }
         }
@@ -110,12 +112,12 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                 let idx_access = &indexes[0];
                 match idx_access {
                     AccessType::Indexed(info) => {
-                        let old_comp_type = producer.set_addr_computation_type();
+                        let old_comp_mode = producer.set_addr_computation_mode();
                         for idx_inst in &info.indexes {
                             idx_inst.generate_ligetron(producer);
                         }
 
-                        producer.set_computation_type(old_comp_type);
+                        producer.set_computation_mode(old_comp_mode);
 
                         info.indexes.len()
                     }
@@ -132,6 +134,8 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
             producer.load_subcmp_mapped_signal_ref(*signal_code, indexes_count);
 
             producer.debug_dump_state("after load mapped signal");
+
+            return false;
         }
     }
 }

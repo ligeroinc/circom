@@ -435,10 +435,8 @@ impl GenerateLigetron for ComputeBucket {
 
         // (x >> i) & 0x1 to extract bit folding
         if let Some((op1, op2)) = get_bit_extract_ops(self, &producer) {
-            println!("BIT EXTRACT!");
-
             // extract bit should always be done in Fr mode
-            let prev_comp = producer.set_fr_computation_type();
+            let prev_comp_mode = producer.switch_computation_mode_to_fr();
 
             // allocating stack value for computation result
             producer.alloc_result();
@@ -450,7 +448,7 @@ impl GenerateLigetron for ComputeBucket {
             // generating bit extract operation
             producer.gen_bit_extract();
 
-            producer.set_computation_type(prev_comp);
+            producer.set_computation_mode(prev_comp_mode);
 
             producer.gen_comment("after bit extract compute bucket");
             producer.debug_dump_state("after bit extract compute bucket");
@@ -460,7 +458,7 @@ impl GenerateLigetron for ComputeBucket {
 
         // switching computation type to Fr if operator does not propogate 32bit
         // computation mode from result to operands
-        let prev_comp_type = if !compute_op_propagates_32bit_down(self.op) {
+        let prev_comp_mode = if !compute_op_propagates_32bit_down(self.op) {
             // special case for comparison of 32bit variables and/or small constants,
             // in that case computation can be done in 32bit mode
             
@@ -484,7 +482,7 @@ impl GenerateLigetron for ComputeBucket {
             if is_cmp_op_32bit {
                 None
             } else {
-                Some(producer.set_fr_computation_type())
+                Some(producer.switch_computation_mode_to_fr())
             }
         } else {
             None
@@ -534,9 +532,9 @@ impl GenerateLigetron for ComputeBucket {
         }
 
         // restoring previous computation type
-        match prev_comp_type {
-            Some(comp_type) => {
-                producer.set_computation_type(comp_type);
+        match prev_comp_mode {
+            Some(comp_mode) => {
+                producer.set_computation_mode(comp_mode);
             },
             None => {}
         }

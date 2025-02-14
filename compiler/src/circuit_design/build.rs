@@ -119,7 +119,7 @@ fn build_template_instances(
             ..TemplateCodeInfo::default()
         };
         let code = template.code;
-        let out = translate::translate_code(code, code_info);
+        let out = translate::translate_code(code, false, code_info);
         field_tracker = out.constant_tracker;
         template_info.body = out.code;
         template_info.expression_stack_depth = out.expression_depth;
@@ -178,7 +178,7 @@ fn build_function_instances(
             ..FunctionCodeInfo::default()
         };
         let code = instance.body;
-        let out = translate::translate_code(code, code_info);
+        let out = translate::translate_code(code, true, code_info);
         string_table = out.string_table;
         field_tracker = out.constant_tracker;
         function_info.body = out.code;

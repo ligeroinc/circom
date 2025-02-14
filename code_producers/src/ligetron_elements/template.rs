@@ -1035,14 +1035,14 @@ impl Template {
                 self.func().load_i32_const(n_bits as i32);
 
                 let r_func = self.func().module_ref().ligetron().fp256_bit_decompose_n.clone();
-                self.func().gen_call(&r_func);
+                self.func().gen_call(&r_func, false);
             } else {
                 // loading pointer to subcomponent data
                 self.func().load_ref(comp.data().clone_ref());
 
                 self.func().debug_dump_state("BEFORE COMP RUN DIRECT CALL");
 
-                self.func().gen_call(&comp.run_func());
+                self.func().gen_call(&comp.run_func(), false);
             }
         }
 

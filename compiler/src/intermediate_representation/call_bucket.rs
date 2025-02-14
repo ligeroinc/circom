@@ -12,6 +12,7 @@ pub struct FinalData {
     pub dest_is_output: bool,
     pub dest_address_type: AddressType,
     pub dest: LocationRule,
+    pub dest_constrained: bool
 }
 
 #[derive(Clone)]
@@ -59,7 +60,7 @@ impl ToString for CallBucket {
         let ret = match &self.return_info {
             ReturnType::Intermediate { op_aux_no } => {format!("Intermediate({})",op_aux_no.to_string())}
 	        ReturnType::Final(final_data) => {
-                format!("Final(size: {})", final_data.context.size.to_string())
+                format!("Final(size: {}, dest_constrained: {})", final_data.context.size.to_string(), final_data.dest_constrained)
             }
         };
         let mut args = "".to_string();
@@ -472,6 +473,9 @@ impl GenerateLigetron for CallBucket {
         producer.debug_dump_state("before call bucket");
         producer.gen_comment("call bucket begin");
 
+        let mut is_32bit = false;
+        let mut is_constrained = false;
+
         match &self.return_info {
             ReturnType::Intermediate { .. } => {
                 // allocating result for call operation
@@ -479,13 +483,24 @@ impl GenerateLigetron for CallBucket {
             }
             ReturnType::Final(data) => {
                 // loading reference to destination value
-                generate_ligetron_load_ref(producer,
-                                           &data.dest,
-                                           &data.dest_address_type,
-                                           &data.context.size,
-                                           true);
+                is_32bit = generate_ligetron_load_ref(producer,
+                                                      &data.dest,
+                                                      &data.dest_address_type,
+                                                      &data.context.size);
+
+                is_constrained = data.dest_constrained;
             }
         }
+
+        let prev_comp_mode: Option<ComputationMode> = if is_32bit {
+            Some(producer.set_int_computation_mode())
+        } else {
+            if is_constrained {
+                Some(producer.set_constrained_fr_computation_mode())
+            } else {
+                None
+            }
+        };
 
         producer.debug_dump_state("call bucket before computing arguments");
 
@@ -499,6 +514,11 @@ impl GenerateLigetron for CallBucket {
 
         producer.debug_dump_state("after call bucket");
         producer.gen_comment("call bucket end");
+
+        // restoring previous computation mode
+        if let Some(mode) = prev_comp_mode {
+            producer.set_computation_mode(mode);
+        }
     }
 }
 

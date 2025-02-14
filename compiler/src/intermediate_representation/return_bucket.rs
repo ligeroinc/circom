@@ -108,7 +108,7 @@ impl GenerateLigetron for ReturnBucket {
         self.value.generate_ligetron(producer);
 
         // generating store
-        producer.store_n(self.with_size);
+        producer.store_n(self.with_size, false);
 
         producer.debug_dump_state("after return bucket");
         producer.gen_comment("return bucket end");

@@ -2,6 +2,7 @@ mod address_type;
 mod assert_bucket;
 mod branch_bucket;
 mod call_bucket;
+mod constraints;
 mod compute_bucket;
 mod create_component_bucket;
 mod load_bucket;

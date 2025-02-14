@@ -46,6 +46,20 @@ use std::collections::HashMap;
 pub use module::LigetronProducerInfo;
 
 
+/// Current computation mode for generated code
+#[derive(Clone, PartialEq, Eq)]
+pub enum ComputationMode {
+    /// fp256 mode with constraints
+    ConstrainedFR,
+
+    /// fp256 mode without constraints
+    FR,
+
+    /// i32 mode
+    I32
+}
+
+
 pub struct LigetronProducer {
     /// Code generation parameters
     info: LigetronProducerInfo,
@@ -60,7 +74,7 @@ pub struct LigetronProducer {
     template_rc: Option<RefCell<Template>>,
 
     /// Type of current computation mode (FR or WASM type)
-    computation_type: CircomValueType
+    computation_mode: ComputationMode
 }
 
 impl LigetronProducer {
@@ -86,7 +100,7 @@ impl LigetronProducer {
                     .collect::<Vec<_>>()
                     .join(", ");
                 debug_log!("\t\tlengths: [{}]", lengths_str);
-    
+
                 debug_log!("\t\tsize: {}", entry.size);
             }
         }
@@ -100,44 +114,65 @@ impl LigetronProducer {
             module,
             func_: None,
             template_rc: None,
-            computation_type: CircomValueType::FR
+            computation_mode: ComputationMode::FR
         };
     }
 
     /// Sets current computation type. Returns previous type
-    pub fn set_computation_type(&mut self, tp: CircomValueType) -> CircomValueType {
-        let res = self.computation_type.clone();
-        self.computation_type = tp;
+    pub fn set_computation_mode(&mut self, mode: ComputationMode) -> ComputationMode {
+        let res = self.computation_mode.clone();
+        self.computation_mode = mode;
         return res;
     }
 
+    /// Resets current computation mode to default
+    pub fn reset_computation_mode(&mut self) {
+        self.set_computation_mode(ComputationMode::ConstrainedFR);
+    }
+
     /// Sets current computation type for address. Returns previous computation type
-    pub fn set_addr_computation_type(&mut self) -> CircomValueType {
-        return self.set_computation_type(CircomValueType::WASM(WASMType::I32));
+    pub fn set_addr_computation_mode(&mut self) -> ComputationMode {
+        return self.set_computation_mode(ComputationMode::I32);
     }
 
     /// Sets current computation type to Fr. Returns previous computation type.
-    pub fn set_fr_computation_type(&mut self) -> CircomValueType {
-        return self.set_computation_type(CircomValueType::FR);
+    pub fn set_fr_computation_mode(&mut self) -> ComputationMode {
+        return self.set_computation_mode(ComputationMode::FR);
+    }
+
+    /// Sets current computation type to constrained Fr. Returns previous computation type.
+    pub fn set_constrained_fr_computation_mode(&mut self) -> ComputationMode {
+        return self.set_computation_mode(ComputationMode::ConstrainedFR);
+    }
+
+    /// Switches mode to Fr. Actual result mode can be Fr or constrained Fr depending
+    /// on current mode.
+    pub fn switch_computation_mode_to_fr(&mut self) -> ComputationMode {
+        let new_mode = match self.computation_mode {
+            ComputationMode::ConstrainedFR => ComputationMode::ConstrainedFR,
+            _ => ComputationMode::FR
+        };
+
+        self.set_computation_mode(new_mode)
     }
 
     /// Sets current computation type to integer. Returns previous computation type.
-    pub fn set_int_computation_type(&mut self) -> CircomValueType {
-        return self.set_computation_type(CircomValueType::WASM(WASMType::I32));
+    pub fn set_int_computation_mode(&mut self) -> ComputationMode {
+        return self.set_computation_mode(ComputationMode::I32);
     }
 
     /// Returns true if current computation type is I32 or I64
     fn is_computation_type_wasm(&self) -> bool {
-        match &self.computation_type {
-            CircomValueType::WASM(..) => true,
+        match &self.computation_mode {
+            ComputationMode::I32 => true,
             _ => false
         }
     }
 
-    /// Returns true if current computation type is FR
-    fn is_computation_type_fr(&self) -> bool {
-        match &self.computation_type {
-            CircomValueType::FR => true,
+    /// Returns true if current computation type is constrained FR
+    fn is_computation_type_constrained_fr(&self) -> bool {
+        match &self.computation_mode {
+            ComputationMode::ConstrainedFR => true,
             _ => false
         }
     }
@@ -292,8 +327,8 @@ impl LigetronProducer {
     }
 
     /// Loads reference to local variable or parameter on stack
-    /// using offset located on top of stack
-    pub fn load_local_var_ref(&mut self, size: usize, for_store: bool) {
+    /// using offset located on top of stack. Returns true if loaded reference is 32bit.
+    pub fn load_local_var_ref(&mut self, size: usize) -> bool {
         if self.template_rc.is_none() {
             // If we are generating function then we have to take into account parameters count.
             // This is not requried for tempaltes because Circom compiler thinks there is no
@@ -303,17 +338,13 @@ impl LigetronProducer {
             if (offset as usize) < params_size {
                 // loading parmaeter
 
-                if for_store {
-                    panic!("can't load parameter reference for store");
-                }
-
                 self.load_par_ref(size);
 
                 // let par = self.func().param(offset as usize);
                 // self.func().drop(1);
                 // self.func().load_ref(Box::new(par));
 
-                return;
+                return false;
             } else {
                 // Decreasing address by number of parameters. That should be done
                 // in compile time in the stack manipulation logic.
@@ -327,6 +358,7 @@ impl LigetronProducer {
         let circom_var_offset = self.func().top_index_offset(0) as usize;
         let mut curr_idx: usize = 0;
         let mut real_var_idx: usize = 0;
+        let mut is_32bit = false;
 
         loop {
             let var = self.func().circom_locals()[real_var_idx].clone();
@@ -363,19 +395,16 @@ impl LigetronProducer {
                     self.func().load_array_slice_ref(Box::new(var.clone()), size);
                 }
 
-                // if we are loading reference for store then set
-                // computation type according to variable type
-                if for_store {
-                    let var_type = self.func().local_var_type(&var);
-                    self.set_computation_type(var_type);
-                }
-
+                let var_type = self.func().local_var_type(&var);
+                is_32bit = !var_type.is_fr();
                 break;
             }
 
             real_var_idx += 1;
             curr_idx += var_size;
         }
+
+        return is_32bit;
     }
 
     /// Loads reference to return value on stack
@@ -570,24 +599,27 @@ impl LigetronProducer {
 
     /// Generates saving Circom value located on top of stack to location specified
     /// in the second stack value
-    pub fn store(&mut self) {
+    pub fn store(&mut self, with_witness: bool) {
         if self.is_computation_type_wasm() {
+            if with_witness {
+                panic!("can't generate wasm store with witness");
+            }
             self.func().gen_int_store();
         } else {
-            self.func().gen_store_fr();
+            self.func().gen_store_fr_with_witness();
         }
     }
 
     /// Generates saving multiple Circom value located on top of stack to location specified
     /// in the second stack value
-    pub fn store_n(&mut self, size: usize) {
+    pub fn store_n(&mut self, size: usize, with_witness: bool) {
         if size == 1 {
-            self.store();
+            self.store(with_witness);
         } else {
             if self.is_computation_type_wasm() {
                 panic!("store n is not supported for wasm types");
             } else {
-                self.func().gen_fr_store_n(size);
+                self.func().gen_fr_store_n(size, with_witness);
             }
         }
     }
@@ -611,8 +643,10 @@ impl LigetronProducer {
     pub fn gen_mul(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_mul();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_mul();
+        } else {
+            self.func().gen_fr_mul_raw();
         }
     }
 
@@ -620,8 +654,10 @@ impl LigetronProducer {
     pub fn gen_div(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_div();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_div();
+        } else {
+            self.func().gen_fr_div_raw();
         }
     }
 
@@ -629,8 +665,10 @@ impl LigetronProducer {
     pub fn gen_add(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_add();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_add();
+        } else {
+            self.func().gen_fr_add_raw();
         }
     }
 
@@ -638,8 +676,10 @@ impl LigetronProducer {
     pub fn gen_sub(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_sub();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_sub();
+        } else {
+            self.func().gen_fr_sub_raw();
         }
     }
 
@@ -647,8 +687,10 @@ impl LigetronProducer {
     pub fn gen_pow(&mut self) {
         if self.is_computation_type_wasm() {
             panic!("pow operation is not supported for wasm types");
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_pow();
+        } else {
+            self.func().gen_fr_pow_raw();
         }
     }
 
@@ -656,8 +698,10 @@ impl LigetronProducer {
     pub fn gen_idiv(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_div();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_idiv();
+        } else {
+            self.func().gen_fr_idiv_raw();
         }
     }
 
@@ -665,8 +709,10 @@ impl LigetronProducer {
     pub fn gen_mod(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_mod();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_mod();
+        } else {
+            self.func().gen_fr_mod_raw();
         }
     }
 
@@ -674,8 +720,10 @@ impl LigetronProducer {
     pub fn gen_shl(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_shl();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_shl();
+        } else {
+            self.func().gen_fr_shl_raw();
         }
     }
 
@@ -683,8 +731,10 @@ impl LigetronProducer {
     pub fn gen_shr(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_shr();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_shr();
+        } else {
+            self.func().gen_fr_shr_raw();
         }
     }
 
@@ -692,8 +742,10 @@ impl LigetronProducer {
     pub fn gen_leq(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_leq();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_leq();
+        } else {
+            self.func().gen_fr_leq_raw();
         }
     }
 
@@ -701,8 +753,10 @@ impl LigetronProducer {
     pub fn gen_geq(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_geq();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_geq();
+        } else {
+            self.func().gen_fr_geq_raw();
         }
     }
 
@@ -710,8 +764,10 @@ impl LigetronProducer {
     pub fn gen_lt(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_lt();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_lt();
+        } else {
+            self.func().gen_fr_lt_raw();
         }
     }
 
@@ -719,8 +775,10 @@ impl LigetronProducer {
     pub fn gen_gt(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_gt();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_gt();
+        } else {
+            self.func().gen_fr_gt_raw();
         }
     }
 
@@ -728,8 +786,10 @@ impl LigetronProducer {
     pub fn gen_eq(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_eq();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_eq();
+        } else {
+            self.func().gen_fr_eq_raw();
         }
     }
 
@@ -737,8 +797,10 @@ impl LigetronProducer {
     pub fn gen_neq(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_neq();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_neq();
+        } else {
+            self.func().gen_fr_neq_raw();
         }
     }
 
@@ -746,8 +808,10 @@ impl LigetronProducer {
     pub fn gen_lor(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_lor();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_lor();
+        } else {
+            self.func().gen_fr_lor_raw();
         }
     }
 
@@ -755,8 +819,10 @@ impl LigetronProducer {
     pub fn gen_land(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_land();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_land();
+        } else {
+            self.func().gen_fr_land_raw();
         }
     }
 
@@ -764,8 +830,10 @@ impl LigetronProducer {
     pub fn gen_bor(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_bor();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_bor();
+        } else {
+            self.func().gen_fr_bor_raw();
         }
     }
 
@@ -773,8 +841,10 @@ impl LigetronProducer {
     pub fn gen_band(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_band();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_band();
+        } else {
+            self.func().gen_fr_band_raw();
         }
     }
 
@@ -782,8 +852,10 @@ impl LigetronProducer {
     pub fn gen_bxor(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_bxor();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_bxor();
+        } else {
+            self.func().gen_fr_bxor_raw();
         }
     }
 
@@ -791,8 +863,10 @@ impl LigetronProducer {
     pub fn gen_neg(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_neg();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_neg();
+        } else {
+            self.func().gen_fr_neg_raw();
         }
     }
 
@@ -800,8 +874,10 @@ impl LigetronProducer {
     pub fn gen_lnot(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_lnot();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_lnot();
+        } else {
+            self.func().gen_fr_lnot_raw();
         }
     }
 
@@ -809,8 +885,10 @@ impl LigetronProducer {
     pub fn gen_bnot(&mut self) {
         if self.is_computation_type_wasm() {
             self.func().gen_int_bnot();
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_bnot();
+        } else {
+            self.func().gen_fr_bnot_raw();
         }
     }
 
@@ -818,8 +896,10 @@ impl LigetronProducer {
     pub fn gen_bit_extract(&mut self) {
         if self.is_computation_type_wasm() {
             panic!("bit extract must be done in Fr mode");
-        } else {
+        } else if self.is_computation_type_constrained_fr() {
             self.func().gen_fr_bit_exctact();
+        } else {
+            self.func().gen_fr_bit_exctact_raw();
         }
     }
 
@@ -834,7 +914,7 @@ impl LigetronProducer {
         let func = CircomFunctionRef::new(symbol.clone(), ftype);
 
         // generating call
-        self.func().gen_call(&func);
+        self.func().gen_call(&func, !self.is_computation_type_constrained_fr());
     }
 
 
@@ -843,29 +923,29 @@ impl LigetronProducer {
 
     /// Generates conversion of stack top value to address
     pub fn to_address(&mut self) {
-        if self.is_computation_type_fr() {
-            panic!("conversion to address should be done in 32bit mode");
-        } else {
+        if self.is_computation_type_wasm() {
             // converting top stack value to index
             self.func().convert_index();
+        } else {
+            panic!("conversion to address should be done in 32bit mode");
         }
     }
 
     /// Generates address add operation
     pub fn addr_add(&mut self) {
-        if self.is_computation_type_fr() {
-            panic!("index add should be done in 32bit mode");
-        } else {
+        if self.is_computation_type_wasm() {
             self.func().index_add();
+        } else {
+            panic!("index add should be done in 32bit mode");
         }
     }
 
     /// Generates address mul opearation
     pub fn addr_mul(&mut self) {
-        if self.is_computation_type_fr() {
-            panic!("index mul should be done in 32bit mode");
-        } else {
+        if self.is_computation_type_wasm() {
             self.func().index_mul();
+        } else {
+            panic!("index mul should be done in 32bit mode");
         }
     }
 
@@ -875,10 +955,10 @@ impl LigetronProducer {
 
     /// Starts generating if-else block using current stack value as condition
     pub fn gen_if(&mut self) {
-        if self.is_computation_type_fr() {
-            panic!("if condition should be generated in int mode");
-        } else {
+        if self.is_computation_type_wasm() {
             self.func().gen_if();
+        } else {
+            panic!("if condition should be generated in int mode");
         }
     }
 
@@ -905,12 +985,12 @@ impl LigetronProducer {
     /// Generates conditional exit from current loop using current FR value on stack
     /// as loop condition
     pub fn gen_loop_exit(&mut self) {
-        if self.is_computation_type_fr() {
-            panic!("loop exit should always be generated in 32bit mode");
-        } else {
+        if self.is_computation_type_wasm() {
             self.func().gen_eqz();
             self.func().get_frame_mut().pop(1);
             self.func().gen_wasm_loop_exit();
+        } else {
+            panic!("loop exit should always be generated in 32bit mode");
         }
     }
 
@@ -937,7 +1017,7 @@ impl LigetronProducer {
 
         // generating call to Ligetron fp256_print function
         let fp256_print = self.module_ref().ligetron().fp256_print.clone();
-        self.func().gen_call(&fp256_print);
+        self.func().gen_call(&fp256_print, false);
     }
 
 
@@ -947,7 +1027,7 @@ impl LigetronProducer {
     /// Dumps current generator state for debugging
     pub fn debug_dump_state(&self, stage: &str) {
         self.func().debug_dump_state(stage);
-        debug_log!("32BIT: {}", !self.is_computation_type_fr());
+        debug_log!("32BIT: {}", self.is_computation_type_wasm());
     }
 
     /// Dumps current stack contents to string

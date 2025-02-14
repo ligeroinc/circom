@@ -72,6 +72,9 @@ impl GenerateLigetron for AssertBucket {
         producer.debug_dump_state("before assert bucket");
         producer.gen_comment("before assert bucket");
 
+        // assert expression should always be generated with constraints
+        let old_mode = producer.set_constrained_fr_computation_mode();
+
         // only assert equal is supported for now in Ligetron
         match self.evaluate.as_ref() {
             Instruction::Compute(compute) => {
@@ -95,6 +98,8 @@ impl GenerateLigetron for AssertBucket {
                 panic!("Only assert equal is supported for Ligetron");
             }
         }
+
+        producer.set_computation_mode(old_mode);
 
         // generating code for calculating assert argument
         // TODO: enable when other comparison operations will be implemented in Ligetron

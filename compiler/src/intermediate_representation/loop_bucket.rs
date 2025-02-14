@@ -82,10 +82,10 @@ impl GenerateLigetron for LoopBucket {
         producer.gen_loop_start();
 
         // generating check for loop condition, using int computatation mode
-        let old_comp_type = producer.set_int_computation_type();
+        let old_comp_mode = producer.set_int_computation_mode();
         self.continue_condition.generate_ligetron(producer);
         producer.gen_loop_exit();
-        producer.set_computation_type(old_comp_type);
+        producer.set_computation_mode(old_comp_mode);
 
         // generating loop body
         for inst in &self.body {

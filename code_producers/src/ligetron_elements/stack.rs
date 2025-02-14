@@ -885,7 +885,11 @@ impl CircomStackFrame {
     /// Generates operation with automatic conversion of arguments located on stack to
     /// required types
     pub fn gen_op<Op: FnOnce(RefMut<WASMFunction>) -> ()>
-            (&mut self, arg_types: Vec<CircomValueType>, first_is_ptr: bool, op: Op) {
+            (&mut self,
+             arg_types: Vec<CircomValueType>,
+             remove_constraints_indexes: Vec<usize>,
+             first_is_ptr: bool,
+             op: Op) {
         // We need to put all values onto WASM stack in correct order. For that,
         // we first store all values already located on WASM stack to temporary locals and
         // then load them again
@@ -923,63 +927,79 @@ impl CircomStackFrame {
             }
         }
 
-        // identifying values with required int -> Fr conversion
+        // identifying values that require additional Fr value allocation
 
-        let mut requires_conversion_to_fr = Vec::<bool>::new();
-        let mut fr_temp_values_count = 0;
+        let mut requires_temp_fr = Vec::<bool>::new();
+        let mut fr_temp_types = Vec::<CircomValueType>::new();
 
         for val_idx in 0 .. arg_types.len() {
             let stack_idx = arg_types.len() - val_idx - 1;
             let val = self.top(stack_idx);
 
-            let is_conv = match arg_types[val_idx] {
-                CircomValueType::FR => {
-                    match self.value_type(&val) {
-                        CircomValueType::FR => false,
-                        CircomValueType::WASM(..) => true,
-                        CircomValueType::Array(tp, _size) => {
-                            match tp.as_ref() {
-                                CircomValueType::FR => false,
-                                _ => {
-                                    panic!("don't know how to convert non Fr array to Fr type");
-                                }
-                            }
+            let need_temp_fr = if remove_constraints_indexes.contains(&val_idx) {
+                // we need temporary Fr value for storing Fr with removed constraints
+                match arg_types[val_idx] {
+                    CircomValueType::FR => {
+                        let val_type = self.value_type(&val);
+                        if !val_type.is_fr() {
+                            panic!("don't know how to remove constraints from non-fr value");
                         }
-                        CircomValueType::Struct(..) => {
-                            panic!("don't know how to convert struct for Fr type");
-                        }
+
+                        fr_temp_types.push(val_type);
+                        true
+                    }
+                    _ => {
+                        panic!("can't remove constraints for non Fr value");
                     }
                 }
-                CircomValueType::WASM(..) => false,
-                CircomValueType::Array(..) => {
-                    panic!("arrays should not reach here");
+            } else {
+                let need_conv = match arg_types[val_idx] {
+                    CircomValueType::FR => {
+                        match self.value_type(&val) {
+                            CircomValueType::FR => false,
+                            CircomValueType::WASM(..) => true,
+                            CircomValueType::Array(tp, _size) => {
+                                match tp.as_ref() {
+                                    CircomValueType::FR => false,
+                                    _ => {
+                                        panic!("don't know how to convert non Fr array to Fr type");
+                                    }
+                                }
+                            }
+                            CircomValueType::Struct(..) => {
+                                panic!("don't know how to convert struct for Fr type");
+                            }
+                        }
+                    }
+                    CircomValueType::WASM(..) => false,
+                    CircomValueType::Array(..) => {
+                        panic!("arrays should not reach here");
+                    }
+                    CircomValueType::Struct(..) => false,
+                };
+
+                if need_conv {
+                    fr_temp_types.push(CircomValueType::FR);
                 }
-                CircomValueType::Struct(..) => false,
+
+                need_conv
             };
 
-            requires_conversion_to_fr.push(is_conv);
+            requires_temp_fr.push(need_temp_fr);
 
-            if is_conv {
-                fr_temp_values_count += 1;
-            }
-
-            if is_conv && val_idx == 0 && first_is_ptr {
+            if need_temp_fr && val_idx == 0 && first_is_ptr {
                 panic!("can't generate value conversion for pointer argument")
             }
         }
 
-        // allocating temporary values for results of Fr conversion
-        let fr_types: Vec<_> = std::iter::repeat([CircomValueType::FR])
-            .flatten()
-            .take(fr_temp_values_count)
-            .collect();
-        let fr_alloc_result = self.alloc_temp_n(&fr_types);
+        self.func.borrow_mut().gen_comment("allocating temporary Fr values");
+        let fr_alloc_result = self.alloc_temp_n(&fr_temp_types);
 
         // saving allocated fr values
         let mut fr_temp_vals = Vec::<Option<TemporaryStackValueRef>>::new();
         let mut fr_alloc_result_idx = 0;
         for val_idx in 0 .. arg_types.len() {
-            if requires_conversion_to_fr[val_idx] {
+            if requires_temp_fr[val_idx] {
                 fr_temp_vals.push(Some(fr_alloc_result[fr_alloc_result_idx].clone()));
                 fr_alloc_result_idx += 1;
             } else {
@@ -991,7 +1011,7 @@ impl CircomStackFrame {
         for val_idx in 0 .. arg_types.len() {
             // NOTE: taking into account number of allocated temporary fr values when
             // calculating stack index
-            let stack_idx = arg_types.len() + fr_temp_values_count - val_idx - 1;
+            let stack_idx = arg_types.len() + fr_alloc_result.len() - val_idx - 1;
             match &wasm_locals[val_idx] {
                 Some(wasm_local) => {
                     let val = self.top(stack_idx);
@@ -1000,9 +1020,38 @@ impl CircomStackFrame {
                             panic!("arrays should not reach here");
                         }
                         CircomValueType::FR => {
-                            if self.value_type(&val).is_fr() {
-                                self.func.borrow_mut().gen_local_get(&wasm_local);
+                            let val_type = self.value_type(&val);
+                            if val_type.is_fr() {
+                                if remove_constraints_indexes.contains(&val_idx) {
+                                    self.func.borrow_mut().gen_comment("removing constraints for op argument");
+                                    let temp_fr_val = fr_temp_vals[val_idx].clone().unwrap();
+
+                                    // loading pointer to temporary fr value
+                                    self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+
+                                    // loading argument from WASM local
+                                    self.func.borrow_mut().gen_local_get(&wasm_local);
+
+                                    let cfunc = self.module.borrow().ligetron()
+                                            .fp256_set_fp256_raw.to_wasm();
+
+                                    if let CircomValueType::Array(_, sz) = val_type {
+                                        // generating copy loop with fp256_set_fp256_raw calls
+                                        gen_fr_array_copy(&mut self.func.borrow_mut(), &cfunc, sz);
+                                    } else {
+                                        // calling fp256_set_fp256_raw for removing constraints
+                                        self.func.borrow_mut().gen_call(&cfunc);
+                                    }
+
+                                    // loading pointer to temporary fr value again
+                                    self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+                                } else {
+                                    self.func.borrow_mut().gen_comment("loading Fr op argument from local");
+                                    self.func.borrow_mut().gen_local_get(&wasm_local);
+                                }
                             } else {
+                                self.func.borrow_mut().gen_comment("converting wasm local op argument from i32 to Fr");
+
                                 let temp_fr_val = fr_temp_vals[val_idx].clone().unwrap();
 
                                 // loading pointer to temporary fr value
@@ -1026,6 +1075,8 @@ impl CircomStackFrame {
                         CircomValueType::WASM(wasm_comp_tp) => {
                             match self.value_type(&val) {
                                 CircomValueType::FR => {
+                                    self.func.borrow_mut().gen_comment("converting wasm local op argyment from Fr to i32");
+
                                     // loading Fr address from WASM local
                                     self.func.borrow_mut().gen_local_get(&wasm_local);
 
@@ -1045,6 +1096,8 @@ impl CircomStackFrame {
                                         panic!("Conversion between wasm types is not implemented yet");
                                     }
 
+                                    self.func.borrow_mut().gen_comment("loading i32 op argument from wasm local");
+
                                     // loading argument from WASM local
                                     self.func.borrow_mut().gen_local_get(&wasm_local);
                                 }
@@ -1056,6 +1109,8 @@ impl CircomStackFrame {
                         CircomValueType::Struct(..) => {
                             match &self.value_type(&val) {
                                 CircomValueType::Struct(..) => {
+                                    self.func.borrow_mut().gen_comment("loading struct op argument from wasm local");
+
                                     // loading struct address from WASM local
                                     self.func.borrow_mut().gen_local_get(&wasm_local);
                                 }
@@ -1076,11 +1131,34 @@ impl CircomStackFrame {
                         }
                         CircomValueType::FR => {
                             match val_type {
-                                CircomValueType::Array(tp, _size) => {
+                                CircomValueType::Array(tp, arr_size) => {
                                     match tp.as_ref() {
                                         CircomValueType::FR => {
-                                            // loading argument to WASM stack using generic load
-                                            self.value_load_ptr_to_wasm_stack(&val);
+                                            if remove_constraints_indexes.contains(&val_idx) {
+                                                self.func.borrow_mut().gen_comment("removing constraints from Fr array op argument");
+        
+                                                let temp_fr_val = fr_temp_vals[val_idx].clone().unwrap();
+            
+                                                // loading pointer to temporary fr value
+                                                self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+            
+                                                // loading argument to WASM stack using generic load
+                                                self.value_load_ptr_to_wasm_stack(&val);
+            
+                                                // generating array copy loop with fp256_set_fp256_raw
+                                                let cfunc = self.module.borrow().ligetron()
+                                                    .fp256_set_fp256_raw.to_wasm();
+                                                gen_fr_array_copy(&mut self.func.borrow_mut(),
+                                                                &cfunc,
+                                                                arr_size);
+            
+                                                // loading pointer to temporary fr value again
+                                                self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+                                            } else {
+                                                // loading argument to WASM stack using generic load
+                                                self.func.borrow_mut().gen_comment("loading Fr array op argument");
+                                                self.value_load_ptr_to_wasm_stack(&val);
+                                            }
                                         }
                                         _ => {
                                             panic!("should not reach here");
@@ -1088,10 +1166,40 @@ impl CircomStackFrame {
                                     }
                                 }
                                 CircomValueType::FR => {
-                                    // loading argument to WASM stack using generic load
-                                    self.value_load_ptr_to_wasm_stack(&val);
+                                    if remove_constraints_indexes.contains(&val_idx) {
+                                        self.func.borrow_mut().gen_comment("removing constraints from Fr op argument");
+
+                                        let temp_fr_val = fr_temp_vals[val_idx].clone().unwrap();
+    
+                                        // loading pointer to temporary fr value
+                                        self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+    
+                                        // loading argument to WASM stack using generic load
+                                        self.value_load_ptr_to_wasm_stack(&val);
+    
+                                        let cfunc = self.module.borrow().ligetron()
+                                            .fp256_set_fp256_raw.to_wasm();
+
+                                        if let CircomValueType::Array(_, sz) = val_type {
+                                            // generating array copy loop with fp256_set_fp256_raw
+                                            gen_fr_array_copy(&mut self.func.borrow_mut(),
+                                                              &cfunc,
+                                                              sz);
+                                        } else {
+                                            // calling fp256_set_fp256_raw for removing constraints
+                                            self.func.borrow_mut().gen_call(&cfunc);
+                                        }
+    
+                                        // loading pointer to temporary fr value again
+                                        self.load_temp_value_ptr_to_wasm_stack(&temp_fr_val);
+                                    } else {
+                                        // loading argument to WASM stack using generic load
+                                        self.value_load_ptr_to_wasm_stack(&val);
+                                    }
                                 }
                                 CircomValueType::WASM(_wasm_type) => {
+                                    self.func.borrow_mut().gen_comment("converting op argument from i32 to Fr");
+
                                     let temp_fr_val = fr_temp_vals[val_idx].clone().unwrap();
 
                                     // loading pointer to temporary fr value
@@ -1122,6 +1230,8 @@ impl CircomStackFrame {
                                     panic!("arrays should not reach here");
                                 }
                                 CircomValueType::FR => {
+                                    self.func.borrow_mut().gen_comment("converting op argument from Fr to i32");
+
                                     // loading Fr pointer to WASM stack
                                     self.value_load_ptr_to_wasm_stack(&val);
 
@@ -1140,8 +1250,10 @@ impl CircomStackFrame {
 
                                     // loading parameter to WASM stack
                                     if val_idx == 0 && first_is_ptr {
+                                        self.func.borrow_mut().gen_comment("loading i32 ptr op argument");
                                         self.value_load_ptr_to_wasm_stack(&val);
                                     } else {
+                                        self.func.borrow_mut().gen_comment("loading i32 op argument");
                                         self.value_load_int_to_wasm_stack(&val);
                                     }
                                 }
@@ -1153,6 +1265,8 @@ impl CircomStackFrame {
                         CircomValueType::Struct(..) => {
                             match &self.value_type(&val) {
                                 CircomValueType::Struct(..) => {
+                                    self.func.borrow_mut().gen_comment("loading struct ptr op argument");
+
                                     // loading struct address to WASM stack
                                     self.value_load_ptr_to_wasm_stack(&val);
                                 }
@@ -1167,13 +1281,15 @@ impl CircomStackFrame {
         }
 
         // generating operation
+        self.func.borrow_mut().gen_comment("executing operation");
         op(self.func.borrow_mut());
 
         // TODO:
         // implement stack deallocation after conversion from wasm to fr is implemented
 
         // removing parameters and allocated Fr values from stack
-        self.pop(arg_types.len() + fr_temp_values_count);
+        self.func.borrow_mut().gen_comment("deallocating temporary Fr values");
+        self.pop(arg_types.len() + fr_alloc_result.len());
     }
     
     /// Loads specified number of top stack values onto WASM stack converting them to
@@ -1293,10 +1409,10 @@ impl CircomStackFrame {
     }
 
     /// Generates call to function passing values located on top of stack as parameters
-    pub fn gen_call(&mut self, func_ref: &CircomFunctionRef) {
+    pub fn gen_call(&mut self, func_ref: &CircomFunctionRef, remove_constraints: bool) {
 
         // calculating argument types for function call
-        
+
         let mut arg_types = Vec::<CircomValueType>::new();
         for ret_type in func_ref.tp().ret_types().iter().rev() {
             match ret_type {
@@ -1315,10 +1431,20 @@ impl CircomStackFrame {
             }
         }
 
+        let ret_type_params_count = arg_types.len();
+
         arg_types.append(&mut func_ref.tp().params().clone());
 
+        // we need to remove constraints of all parameters if requested
+        let mut remove_constraints_indexes = Vec::<usize>::new();
+        if remove_constraints {
+            for i in 0 .. func_ref.tp().params().len() {
+                remove_constraints_indexes.push(i + ret_type_params_count);
+            }
+        }
+
         // generating call using gen_op function
-        self.gen_op(arg_types, false, |mut func| {
+        self.gen_op(arg_types, remove_constraints_indexes, false, |mut func| {
             func.gen_call(&func_ref.to_wasm());
         });
 

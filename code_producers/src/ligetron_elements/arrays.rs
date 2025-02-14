@@ -267,3 +267,50 @@ pub fn array_element(arr: Box<dyn CircomValueRef>, index: usize) -> Box<dyn Circ
 pub fn array_slice(arr: Box<dyn CircomValueRef>, index: usize, size: usize) -> Box<dyn CircomValueRef> {
     return Box::new(ArraySliceRef::new(arr, index, size));
 }
+
+
+/// Generates loop for Fr array copy with specified Fr copy function
+pub fn gen_fr_array_copy(func: &mut WASMFunction, copy_func: &WASMFunctionRef, size: usize) {
+    let dst_ptr_var = func.new_wasm_local(WASMType::PTR);
+    let src_ptr_var = func.new_wasm_local(WASMType::PTR);
+    let src_end_ptr_var = func.new_wasm_local(WASMType::PTR);
+
+    func.gen_comment(&format!("copy {} elements", size));
+
+    // saving src and dst pointers
+    func.gen_local_set(&src_ptr_var);
+    func.gen_local_set(&dst_ptr_var);
+
+    // calculating end source pointer
+    func.gen_local_get(&src_ptr_var);
+    func.gen_const(WASMType::I32, (size * CircomValueType::FR.size()) as i64);
+    func.gen_add(WASMType::PTR);
+    func.gen_local_set(&src_end_ptr_var);
+
+    func.gen_loop_start();
+
+    // checking for loop exit
+    func.gen_local_get(&src_ptr_var);
+    func.gen_local_get(&src_end_ptr_var);
+    func.gen_eq(&WASMType::PTR);
+    func.gen_loop_exit();
+
+    // copy function call
+    func.gen_local_get(&dst_ptr_var);
+    func.gen_local_get(&src_ptr_var);
+    func.gen_call(copy_func);
+
+    // incrementing src pointer
+    func.gen_local_get(&src_ptr_var);
+    func.gen_const(WASMType::I32, CircomValueType::FR.size() as i64);
+    func.gen_add(WASMType::PTR);
+    func.gen_local_set(&src_ptr_var);
+
+    // incrementing dst pointer
+    func.gen_local_get(&dst_ptr_var);
+    func.gen_const(WASMType::I32, CircomValueType::FR.size() as i64);
+    func.gen_add(WASMType::PTR);
+    func.gen_local_set(&dst_ptr_var);
+
+    func.gen_loop_end();
+}

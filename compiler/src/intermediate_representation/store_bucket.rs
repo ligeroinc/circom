@@ -17,6 +17,7 @@ pub struct StoreBucket {
     pub src_address_type: Option<InstructionPointer>, 
     pub dest: LocationRule,
     pub src: InstructionPointer,
+    pub dest_constrained: bool
 }
 
 impl IntoInstruction for StoreBucket {
@@ -50,8 +51,8 @@ impl ToString for StoreBucket {
         let src_size = self.src_context.size.to_string();
         let dst_size = self.context.size.to_string();
         format!(
-            "STORE(line: {}, template_id: {}, dest_type: {}, src_size:{}, dst_size: {}, dest: {}, src: {})",
-            line, template_id, dest_type, src_size, dst_size, dest, src
+            "STORE(line: {}, template_id: {}, dest_type: {}, src_size:{}, dst_size: {}, dest: {}, src: {}, dest_constrained: {})",
+            line, template_id, dest_type, src_size, dst_size, dest, src, self.dest_constrained
         )
     }
 }
@@ -467,11 +468,20 @@ impl GenerateLigetron for StoreBucket {
         producer.gen_comment("store bucket begin");
 
         // loading reference to destination value
-        generate_ligetron_load_ref(producer,
-                                   &self.dest,
-                                   &self.dest_address_type,
-                                   &self.context.size,
-                                   true);
+        let is_32bit = generate_ligetron_load_ref(producer,
+                                                  &self.dest,
+                                                  &self.dest_address_type,
+                                                  &self.context.size);
+
+        let prev_comp_mode: Option<ComputationMode> = if is_32bit {
+            Some(producer.set_int_computation_mode())
+        } else {
+            if self.dest_constrained {
+                Some(producer.set_constrained_fr_computation_mode())
+            } else {
+                None
+            }
+        };
 
         producer.debug_dump_state("store bucket after load dest ref");
 
@@ -479,7 +489,12 @@ impl GenerateLigetron for StoreBucket {
         self.src.as_ref().generate_ligetron(producer);
 
         // generating store
-        producer.store_n(store_size);
+        let with_witness = match self.dest_address_type {
+            AddressType::Signal => true,
+            AddressType::SubcmpSignal { .. } => true,
+            AddressType::Variable => false
+        };
+        producer.store_n(store_size, with_witness);
 
         // generating component run code if storing in subcomponent signals
         match &self.dest_address_type {
@@ -487,9 +502,9 @@ impl GenerateLigetron for StoreBucket {
                 producer.debug_dump_state("before load subcomponent index for run");
 
                 // generating code for calculating subcomponent index
-                let old_comp_type = producer.set_addr_computation_type();
+                let old_comp_mode = producer.set_addr_computation_mode();
                 cmp_address.generate_ligetron(producer);
-                producer.set_computation_type(old_comp_type);
+                producer.set_computation_mode(old_comp_mode);
 
                 producer.debug_dump_state("after load subcomponent index for run");
 
@@ -510,8 +525,10 @@ impl GenerateLigetron for StoreBucket {
             _ => {}
         }
 
-        // resetting computation mode to Fr
-        producer.set_fr_computation_type();
+        // restoring previous computation mode
+        if let Some(mode) = prev_comp_mode {
+            producer.set_computation_mode(mode);
+        }
 
         producer.gen_comment("store bucket end");
         producer.debug_dump_state("after store bucket");
