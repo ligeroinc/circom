@@ -19,6 +19,7 @@ pub struct LigetronContext {
     pub fp256_set_fp256: CircomFunctionRef,
     pub fp256_set_fp256_with_witness: CircomFunctionRef,
     pub fp256_set_fp256_raw: CircomFunctionRef,
+    pub fp256_create_witness: CircomFunctionRef,
     pub fp256_print: CircomFunctionRef,
 
     pub fp256_addmod: CircomFunctionRef,
@@ -147,6 +148,9 @@ impl LigetronContext {
         let fp256_set_fp256_raw = Self::import_function(module, "fp256_set_fp256_raw", fp256_set_fp256_type.clone());
         let fp256_set_fp256_with_witness = Self::import_function(module, "fp256_set_fp256_with_witness", fp256_set_fp256_type);
 
+        let fp256_create_witness_type = CircomFunctionType::new(vec![CircomValueType::FR], vec![]);
+        let fp256_create_witness = Self::import_function(module, "fp256_create_witness", fp256_create_witness_type);
+
         let fp256_print_type = CircomFunctionType::new(vec![], vec![CircomValueType::FR]);
         let fp256_print = Self::import_function(module, "fp256_print", fp256_print_type);
 
@@ -255,6 +259,7 @@ impl LigetronContext {
             fp256_set_fp256: fp256_set_fp256,
             fp256_set_fp256_raw: fp256_set_fp256_raw,
             fp256_set_fp256_with_witness: fp256_set_fp256_with_witness,
+            fp256_create_witness: fp256_create_witness,
             fp256_print: fp256_print,
 
             fp256_addmod: fp256_addmod,

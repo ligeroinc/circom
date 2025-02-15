@@ -486,7 +486,8 @@ impl GenerateLigetron for CallBucket {
                 is_32bit = generate_ligetron_load_ref(producer,
                                                       &data.dest,
                                                       &data.dest_address_type,
-                                                      &data.context.size);
+                                                      &data.context.size,
+                                                      false);
 
                 is_constrained = data.dest_constrained;
             }

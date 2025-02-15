@@ -56,7 +56,8 @@ impl ToString for AddressType {
 pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
                                   loc: &LocationRule,
                                   addr_t: &AddressType,
-                                  size: &SizeOption) -> bool {
+                                  size: &SizeOption,
+                                  for_store: bool) -> bool {
 
     let sz = match &size {
         SizeOption::Single(size) => *size,
@@ -90,14 +91,14 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
 
             match &addr_t {
                 AddressType::Variable => {
-                    return producer.load_local_var_ref(sz);
+                    return producer.load_local_var_ref(sz, for_store);
                 }
                 AddressType::Signal => {
-                    producer.load_signal_ref(sz);
+                    producer.load_signal_ref(sz, for_store);
                     return false;
                 }
                 AddressType::SubcmpSignal { .. } => {
-                    producer.load_subcmp_signal_ref(sz);
+                    producer.load_subcmp_signal_ref(sz, for_store);
                     return false;
                 }
             }
@@ -131,7 +132,7 @@ pub fn generate_ligetron_load_ref(producer: &mut LigetronProducer,
 
             producer.debug_dump_state("after mapped indexes calculation");
 
-            producer.load_subcmp_mapped_signal_ref(*signal_code, indexes_count);
+            producer.load_subcmp_mapped_signal_ref(*signal_code, indexes_count, for_store);
 
             producer.debug_dump_state("after load mapped signal");
 

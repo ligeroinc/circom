@@ -1132,6 +1132,15 @@ impl CircomFunction {
         }
     }
 
+    /// Generates witness creation for value loaded on top of stack
+    pub fn gen_create_witness(&mut self) {
+        let cfunc = self.module_ref().ligetron().fp256_create_witness.to_wasm();
+        let types = vec![CircomValueType::FR];
+        self.frame.gen_op(types, vec![], false, |mut func| {
+            func.gen_call(&cfunc);
+        });
+    }
+
     /// Generates assert equal operation
     pub fn assert_equal(&mut self) {
         let fp256_assert_equal = self.module_ref().ligetron().fp256_assert_equal.clone();

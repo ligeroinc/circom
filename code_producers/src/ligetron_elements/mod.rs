@@ -74,7 +74,13 @@ pub struct LigetronProducer {
     template_rc: Option<RefCell<Template>>,
 
     /// Type of current computation mode (FR or WASM type)
-    computation_mode: ComputationMode
+    computation_mode: ComputationMode,
+
+    /// Is reference to store destination loaded on top of stack
+    store_ref_loaded: bool,
+
+    /// Is reference to store destination used as operation result
+    store_ref_used: bool,
 }
 
 impl LigetronProducer {
@@ -114,7 +120,9 @@ impl LigetronProducer {
             module,
             func_: None,
             template_rc: None,
-            computation_mode: ComputationMode::FR
+            computation_mode: ComputationMode::FR,
+            store_ref_loaded: false,
+            store_ref_used: false
         };
     }
 
@@ -328,7 +336,7 @@ impl LigetronProducer {
 
     /// Loads reference to local variable or parameter on stack
     /// using offset located on top of stack. Returns true if loaded reference is 32bit.
-    pub fn load_local_var_ref(&mut self, size: usize) -> bool {
+    pub fn load_local_var_ref(&mut self, size: usize, for_store: bool) -> bool {
         if self.template_rc.is_none() {
             // If we are generating function then we have to take into account parameters count.
             // This is not requried for tempaltes because Circom compiler thinks there is no
@@ -404,6 +412,10 @@ impl LigetronProducer {
             curr_idx += var_size;
         }
 
+        if for_store && !is_32bit {
+            self.store_ref_loaded = true;
+        }
+
         return is_32bit;
     }
 
@@ -411,6 +423,7 @@ impl LigetronProducer {
     pub fn load_ret_val_ref(&mut self) {
         let rv = self.func().ret_val(0);
         self.func().load_ref(Box::new(rv));
+        self.store_ref_loaded = true;
     }
 
 
@@ -494,7 +507,7 @@ impl LigetronProducer {
     }
 
     /// Loads reference to signal on stack
-    pub fn load_signal_ref(&mut self, size: usize) {
+    pub fn load_signal_ref(&mut self, size: usize, for_store: bool) {
         let circom_signal_offset = self.func().top_index_offset(0) as usize;
 
         let mut curr_idx: usize = 0;
@@ -515,6 +528,10 @@ impl LigetronProducer {
             real_sig_idx += 1;
             curr_idx += sig_size;
         }
+
+        if for_store {
+            self.store_ref_loaded = true;
+        }
     }
 
     /// Creates new subcomponent
@@ -530,13 +547,24 @@ impl LigetronProducer {
     }
 
     /// Loads reference to subcomponent indexed signal
-    pub fn load_subcmp_signal_ref(&mut self, size: usize) {
+    pub fn load_subcmp_signal_ref(&mut self, size: usize, for_store: bool) {
         self.template().load_subcmp_signal_ref(size);
+
+        if for_store {
+            self.store_ref_loaded = true;
+        }
     }
 
     /// Loads reference to subcomponent mapped signal
-    pub fn load_subcmp_mapped_signal_ref(&mut self, signal_code: usize, indexes_count: usize) {
+    pub fn load_subcmp_mapped_signal_ref(&mut self,
+                                         signal_code: usize,
+                                         indexes_count: usize,
+                                         for_store: bool) {
         self.template().load_subcmp_mapped_signal_ref(signal_code, indexes_count);
+
+        if for_store {
+            self.store_ref_loaded = true;
+        }
     }
 
     /// Generates code for running subcomponent after store to signal
@@ -613,6 +641,32 @@ impl LigetronProducer {
     /// Generates saving multiple Circom value located on top of stack to location specified
     /// in the second stack value
     pub fn store_n(&mut self, size: usize, with_witness: bool) {
+        self.store_ref_loaded = false;
+
+        if !self.is_computation_type_wasm() {
+            if self.store_ref_used {
+                // we reused store reference as result of another operation and
+                // don't need to generate store. Creating value witness if computation
+                // mode in unconstrained
+
+                self.store_ref_used = false;
+
+                if with_witness && !self.is_computation_type_constrained_fr() {
+                    // creating value witness with fp256_create_witness function
+                    self.func().gen_create_witness();
+                } else {
+                    // removing value located on top of stack
+                    self.func().drop(1);
+                }
+
+                return
+            }
+        }
+
+        if self.store_ref_used && self.is_computation_type_wasm() {
+            panic!("can't optimize store for wasm computations");
+        }
+
         if size == 1 {
             self.store(with_witness);
         } else {
@@ -634,7 +688,23 @@ impl LigetronProducer {
     pub fn alloc_result(&mut self) {
         if self.is_computation_type_wasm() {
             // we don't need to allocate result for WASM computations
+            self.store_ref_loaded = false;
         } else {
+            if self.store_ref_loaded {
+                self.store_ref_loaded = false;
+
+                let top_val = self.func().get_frame().top(0);
+                let top_val_is_wasm = self.func().get_frame().value_is_wasm_stack(&top_val);
+                if !top_val_is_wasm {
+                    // Reusing reference to store destination for operation result.
+                    // We do that only if value address is not located on WASM stack
+                    let val_kind = self.func().get_frame().value_kind(&top_val);
+                    self.func().get_frame_mut().load_ref(val_kind);
+                    self.store_ref_used = true;
+                    return;
+                }
+            }
+
             self.func().alloc_fr_result();
         }
     }

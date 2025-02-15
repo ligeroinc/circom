@@ -257,7 +257,8 @@ impl GenerateLigetron for LoadBucket {
         let _ = generate_ligetron_load_ref(producer,
                                            &self.src,
                                            &self.address_type,
-                                           &self.context.size);
+                                           &self.context.size,
+                                           false);
 
         producer.debug_dump_state("after load bucket");
     }

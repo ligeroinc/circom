@@ -471,7 +471,8 @@ impl GenerateLigetron for StoreBucket {
         let is_32bit = generate_ligetron_load_ref(producer,
                                                   &self.dest,
                                                   &self.dest_address_type,
-                                                  &self.context.size);
+                                                  &self.context.size,
+                                                  true);
 
         let prev_comp_mode: Option<ComputationMode> = if is_32bit {
             Some(producer.set_int_computation_mode())
